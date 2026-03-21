@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
 
-from data_loader import get_current_price, get_eval_dataset, get_report_content, get_reports
+from data_loader import get_current_prices, get_eval_dataset, get_report_content, get_reports
 
 # ---------------------------------------------------------------------------
 # Page config (must be first st call)
@@ -27,8 +27,20 @@ st.set_page_config(page_title="BioResearch Eval", page_icon=":pill:", layout="wi
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
+def _to_plain_dict(obj):
+    """Recursively convert st.secrets AttrDict to plain mutable dicts/lists."""
+    if hasattr(obj, "items"):
+        return {k: _to_plain_dict(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_plain_dict(v) for v in obj]
+    return obj
+
+# streamlit-authenticator mutates failed_login_attempts/logged_in fields,
+# but st.secrets is read-only. Recursively convert to plain mutable dicts.
+credentials = _to_plain_dict(st.secrets["credentials"])
+
 authenticator = stauth.Authenticate(
-    dict(st.secrets["credentials"]),
+    credentials,
     st.secrets["cookie"]["name"],
     st.secrets["cookie"]["key"],
     st.secrets["cookie"]["expiry_days"],
@@ -104,9 +116,13 @@ with tab_watchlist:
                 "UNKNOWN": "UNKNOWN",
             }
 
+            # Batch fetch all prices in one API call
+            all_tickers = tuple(sorted({w["ticker"] for w in filtered}))
+            prices_map = get_current_prices(all_tickers)
+
             rows = []
             for w in filtered:
-                price_info = get_current_price(w["ticker"])
+                price_info = prices_map.get(w["ticker"])
                 current_price = price_info["price"] if price_info else None
                 pred_price = None
 
@@ -126,7 +142,7 @@ with tab_watchlist:
                         "Company": w.get("company_name", "") or w["ticker"],
                         "Action": w["action"],
                         "Catalyst Date": w["catalyst_date"] or "N/A",
-                        "Days Until": w["days_until"] if w["days_until"] is not None else "N/A",
+                        "Days Until": str(w["days_until"]) if w["days_until"] is not None else "N/A",
                         "PTS Gap": f"{w['pts_gap']:+.2f}",
                         "Sci PTS": f"{w['science_pts']:.0%}",
                         "Mkt PTS": f"{w['market_pts']:.0%}",
@@ -141,11 +157,11 @@ with tab_watchlist:
                 )
 
             df = pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
             now = datetime.now().strftime("%Y-%m-%d %H:%M")
             st.caption(
-                f"Current prices fetched from yfinance (cached 10 min). "
+                f"Current prices fetched from FMP (cached 10 min). "
                 f"Last refresh: {now}. "
                 f"Prediction prices captured at each run's timestamp."
             )
@@ -247,7 +263,7 @@ with tab_scorecard:
                     }
                 )
             st.dataframe(
-                pd.DataFrame(event_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(event_rows), width="stretch", hide_index=True
             )
 
         # --- Stratified metrics ---
@@ -271,7 +287,7 @@ with tab_scorecard:
                         }
                     )
                 st.dataframe(
-                    pd.DataFrame(type_rows), use_container_width=True, hide_index=True
+                    pd.DataFrame(type_rows), width="stretch", hide_index=True
                 )
 
             by_conv = stratified.get("by_conviction", [])
@@ -290,7 +306,7 @@ with tab_scorecard:
                         }
                     )
                 st.dataframe(
-                    pd.DataFrame(conv_rows), use_container_width=True, hide_index=True
+                    pd.DataFrame(conv_rows), width="stretch", hide_index=True
                 )
 
 # ===========================================================================
@@ -323,7 +339,7 @@ with tab_dataset:
                     }
                 )
             st.dataframe(
-                pd.DataFrame(outcome_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(outcome_rows), width="stretch", hide_index=True
             )
 
     # --- Predictions awaiting outcome ---
@@ -353,7 +369,7 @@ with tab_dataset:
                     }
                 )
             st.dataframe(
-                pd.DataFrame(pred_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(pred_rows), width="stretch", hide_index=True
             )
 
     # --- Unpaired outcomes ---
@@ -417,7 +433,7 @@ with tab_reports:
                 }
             )
 
-        st.dataframe(pd.DataFrame(report_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(report_rows), width="stretch", hide_index=True)
 
         # --- Report viewer ---
         st.divider()

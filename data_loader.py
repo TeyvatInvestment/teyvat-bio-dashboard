@@ -126,16 +126,39 @@ def get_report_content(storage_path: str) -> str:
 
 
 @st.cache_data(ttl=600)
-def get_current_price(ticker: str) -> dict | None:
-    """Fetch current price via yfinance (cached 10 min)."""
-    try:
-        import yfinance as yf
+def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
+    """Fetch current prices for multiple tickers via FMP batch quote (cached 10 min).
 
-        yticker = yf.Ticker(ticker)
-        info = yticker.fast_info
-        return {
-            "price": round(float(info.last_price), 2),
-            "prev_close": round(float(info.previous_close), 2),
-        }
+    Uses a single API call for all tickers: /v3/quote/AAPL,MSFT,...
+    Returns {ticker: {"price": float, "prev_close": float} | None}.
+    """
+    import asyncio
+
+    import httpx
+
+    api_key = st.secrets["fmp"]["api_key"]
+
+    async def _fetch() -> dict[str, dict | None]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # FMP supports comma-separated tickers in a single request
+            symbols = ",".join(tickers)
+            resp = await client.get(
+                f"https://financialmodelingprep.com/api/v3/quote/{symbols}",
+                params={"apikey": api_key},
+            )
+            data = resp.json()
+
+        results: dict[str, dict | None] = {t: None for t in tickers}
+        if isinstance(data, list):
+            for q in data:
+                symbol = q.get("symbol", "")
+                results[symbol] = {
+                    "price": round(float(q.get("price", 0)), 2),
+                    "prev_close": round(float(q.get("previousClose", 0)), 2),
+                }
+        return results
+
+    try:
+        return asyncio.run(_fetch())
     except Exception:
-        return None
+        return {t: None for t in tickers}
