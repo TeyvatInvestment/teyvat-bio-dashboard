@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "BioResearch Eval Dashboard — Streamlit app for catalyst prediction tracking"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.35",
+    "streamlit>=1.36",
     "streamlit-authenticator>=0.3,<0.5",
     "supabase>=2.0",
     "pydantic>=2.0",

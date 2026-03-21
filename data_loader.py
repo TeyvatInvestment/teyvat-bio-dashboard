@@ -164,6 +164,41 @@ def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
         return {t: None for t in tickers}
 
 
+@st.cache_data(ttl=86400)  # Cache for 1 day
+def get_company_profiles(tickers: tuple[str, ...]) -> dict[str, str]:
+    """Fetch company names from FMP profile endpoint.
+
+    Returns {ticker: company_name} mapping. Cached for 1 day.
+    """
+    import asyncio
+
+    api_key = st.secrets["fmp"]["api_key"]
+
+    async def _fetch() -> dict[str, str]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            symbols = ",".join(tickers)
+            resp = await client.get(
+                f"https://financialmodelingprep.com/api/v3/profile/{symbols}",
+                params={"apikey": api_key},
+            )
+            data = resp.json()
+
+        results: dict[str, str] = {}
+        if isinstance(data, list):
+            for profile in data:
+                symbol = profile.get("symbol", "")
+                name = profile.get("companyName", "")
+                if symbol and name:
+                    results[symbol] = name
+        return results
+
+    try:
+        return asyncio.run(_fetch())
+    except Exception:
+        logger.warning("Failed to fetch FMP company profiles")
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Write helpers — outcome recording from the dashboard
 # ---------------------------------------------------------------------------
@@ -275,7 +310,7 @@ def record_outcome_from_ui(
     if resp.data:
         raise ValueError(f"Outcome already exists: {ticker} {event_type} on {event_date}")
 
-    # Resolve company_name from predictions if not provided
+    # Resolve company_name from predictions if not provided, then FMP
     if not company_name:
         resp = (
             client.table("eval_predictions")
@@ -288,7 +323,8 @@ def record_outcome_from_ui(
         if resp.data:
             company_name = resp.data[0]["company_name"]
         else:
-            company_name = ticker
+            profiles = get_company_profiles((ticker,))
+            company_name = profiles.get(ticker, ticker)
 
     # Fetch prices from FMP
     warnings: list[str] = []
@@ -335,3 +371,84 @@ def record_outcome_from_ui(
     logger.info("Outcome recorded: %s %s %s → %s", ticker, event_type, event_date, outcome)
 
     return {"outcome": row, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Report requests
+# ---------------------------------------------------------------------------
+
+VALID_REQUEST_TYPES = frozenset({"full_analysis", "quick_update", "deep_dive"})
+VALID_PRIORITIES = frozenset({"normal", "high", "urgent"})
+
+
+@st.cache_data
+def get_report_requests() -> list[dict]:
+    """Load report requests from the report_requests table."""
+    client = _get_supabase_client()
+    resp = (
+        client.table("report_requests")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return resp.data
+
+
+def submit_report_request(
+    ticker: str,
+    requested_by: str,
+    request_type: str = "full_analysis",
+    priority: str = "normal",
+    notes: str | None = None,
+) -> dict:
+    """Insert a new report request into Supabase.
+
+    Returns the inserted row data.
+    Raises ValueError on invalid inputs or duplicate pending requests.
+    """
+    ticker = ticker.upper()
+
+    if request_type not in VALID_REQUEST_TYPES:
+        raise ValueError(
+            f"Invalid request_type '{request_type}'. "
+            f"Must be one of: {', '.join(sorted(VALID_REQUEST_TYPES))}"
+        )
+    if priority not in VALID_PRIORITIES:
+        raise ValueError(
+            f"Invalid priority '{priority}'. "
+            f"Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"
+        )
+
+    client = _get_supabase_client()
+
+    # Check for duplicate pending request
+    resp = (
+        client.table("report_requests")
+        .select("id")
+        .eq("ticker", ticker)
+        .eq("status", "pending")
+        .limit(1)
+        .execute()
+    )
+    if resp.data:
+        raise ValueError(f"A pending request already exists for {ticker}")
+
+    # Resolve company name via FMP
+    profiles = get_company_profiles((ticker,))
+    company_name = profiles.get(ticker, ticker)
+
+    row: dict = {
+        "ticker": ticker,
+        "company_name": company_name,
+        "requested_by": requested_by,
+        "request_type": request_type,
+        "priority": priority,
+        "status": "pending",
+    }
+    if notes:
+        row["notes"] = notes
+
+    resp = client.table("report_requests").insert(row).execute()
+    logger.info("Report request submitted: %s by %s", ticker, requested_by)
+
+    return resp.data[0] if resp.data else row
