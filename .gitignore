@@ -1,0 +1,35 @@
+# Secrets — NEVER commit these
+.streamlit/secrets.toml
+.env
+*.key
+*.pem
+
+# OMC
+.omc/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest / coverage
+.pytest_cache/
+htmlcov/
+.coverage
