@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
 
-from data_loader import get_current_price, get_eval_dataset
+from data_loader import get_current_price, get_eval_dataset, get_report_content, get_reports
 
 # ---------------------------------------------------------------------------
 # Page config (must be first st call)
@@ -62,7 +62,9 @@ data = get_eval_dataset()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_watchlist, tab_scorecard, tab_dataset = st.tabs(["Watchlist", "Scorecard", "Dataset"])
+tab_watchlist, tab_scorecard, tab_dataset, tab_reports = st.tabs(
+    ["Watchlist", "Scorecard", "Dataset", "Reports"]
+)
 
 # ===========================================================================
 # Tab 1: Watchlist
@@ -380,3 +382,55 @@ with tab_dataset:
         chart_data["Run Date"] = pd.to_datetime(chart_data["Run Date"])
         chart_data["Catalyst Date"] = pd.to_datetime(chart_data["Catalyst Date"])
         st.scatter_chart(chart_data, x="Run Date", y="Catalyst Date", color="Action", size=80)
+
+# ===========================================================================
+# Tab 4: Reports
+# ===========================================================================
+with tab_reports:
+    st.subheader("Shared Research Reports")
+
+    reports = get_reports()
+
+    if not reports:
+        st.info("No reports uploaded yet. Run `bioresearch analyze TICKER` to generate and share.")
+    else:
+        # --- Filter by ticker ---
+        all_tickers = sorted({r["ticker"] for r in reports})
+        selected_ticker = st.selectbox("Filter by ticker", ["All"] + all_tickers)
+        if selected_ticker != "All":
+            reports = [r for r in reports if r["ticker"] == selected_ticker]
+
+        # --- Report list ---
+        report_rows = []
+        for r in reports:
+            report_rows.append(
+                {
+                    "Ticker": r["ticker"],
+                    "Company": r.get("company_name", ""),
+                    "Action": r.get("action", "N/A"),
+                    "Conviction": r.get("net_conviction", "N/A"),
+                    "PTS Gap": f"{r['pts_gap']:+.2f}" if r.get("pts_gap") is not None else "N/A",
+                    "Risk": r.get("risk_decision", "N/A"),
+                    "Quality": f"{r['data_quality']:.2f}" if r.get("data_quality") else "N/A",
+                    "Date": r["report_timestamp"][:10],
+                    "Size": f"{r.get('file_size_bytes', 0) / 1024:.0f} KB",
+                }
+            )
+
+        st.dataframe(pd.DataFrame(report_rows), use_container_width=True, hide_index=True)
+
+        # --- Report viewer ---
+        st.divider()
+        report_options = {
+            f"{r['ticker']} — {r['report_timestamp'][:10]}": r["storage_path"] for r in reports
+        }
+        selected_label = st.selectbox("Select report to view", list(report_options.keys()))
+
+        if selected_label:
+            storage_path = report_options[selected_label]
+            try:
+                content = get_report_content(storage_path)
+                with st.expander("Full Report", expanded=True):
+                    st.markdown(content)
+            except Exception as exc:
+                st.error(f"Failed to load report: {exc}")

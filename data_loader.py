@@ -107,6 +107,24 @@ def get_eval_dataset() -> dict:
     }
 
 
+@st.cache_data(ttl=300)
+def get_reports(ticker: str | None = None) -> list[dict]:
+    """Load report metadata from eval_reports table (5 min TTL)."""
+    client = _get_supabase_client()
+    query = client.table("eval_reports").select("*").order("report_timestamp", desc=True)
+    if ticker:
+        query = query.eq("ticker", ticker.upper())
+    resp = query.execute()
+    return resp.data
+
+
+def get_report_content(storage_path: str) -> str:
+    """Download a report's Markdown content from the reports storage bucket."""
+    client = _get_supabase_client()
+    content = client.storage.from_("reports").download(storage_path)
+    return content.decode("utf-8")
+
+
 @st.cache_data(ttl=600)
 def get_current_price(ticker: str) -> dict | None:
     """Fetch current price via yfinance (cached 10 min)."""
