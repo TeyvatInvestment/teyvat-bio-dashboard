@@ -11,7 +11,10 @@ Requires a ``report_requests`` table in Supabase:
         priority text not null default 'normal',
         notes text,
         status text not null default 'pending',
-        created_at timestamptz not null default now()
+        created_at timestamptz not null default now(),
+        completed_at timestamptz,
+        error_message text,
+        report_storage_path text
     );
 """
 
@@ -22,7 +25,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from data_loader import get_report_requests, submit_report_request
+from data_loader import get_report_content, get_report_requests, submit_report_request
 
 st.title("Request Report")
 
@@ -98,20 +101,47 @@ else:
         rows = []
         for r in filtered:
             status_raw = r.get("status", "pending")
-            rows.append(
-                {
-                    "ID": r["id"],
-                    "Status": status_raw.replace("_", " ").title(),
-                    "Ticker": r["ticker"],
-                    "Company": r.get("company_name") or r["ticker"],
-                    "Type": r["request_type"].replace("_", " ").title(),
-                    "Priority": r["priority"].title(),
-                    "Requested By": r["requested_by"],
-                    "Notes": r.get("notes") or "",
-                    "Date": r["created_at"][:10],
-                }
-            )
+            row = {
+                "ID": r["id"],
+                "Status": status_raw.replace("_", " ").title(),
+                "Ticker": r["ticker"],
+                "Company": r.get("company_name") or r["ticker"],
+                "Type": r["request_type"].replace("_", " ").title(),
+                "Priority": r["priority"].title(),
+                "Requested By": r["requested_by"],
+                "Notes": r.get("notes") or "",
+                "Requested": r["created_at"][:10],
+                "Completed": r["completed_at"][:10] if r.get("completed_at") else "",
+            }
+            if r.get("error_message"):
+                row["Error"] = r["error_message"]
+            else:
+                row["Error"] = ""
+            rows.append(row)
 
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+        # Show download buttons for completed reports with a storage path
+        completed_with_reports = [
+            r for r in filtered
+            if r.get("report_storage_path") and r.get("status") == "completed"
+        ]
+        if completed_with_reports:
+            st.subheader("Download Reports")
+            for r in completed_with_reports:
+                label = f"{r['ticker']} — {r['request_type'].replace('_', ' ').title()}"
+                with st.expander(label):
+                    try:
+                        content = get_report_content(r["report_storage_path"])
+                        st.download_button(
+                            label=f"Download {r['ticker']} Report",
+                            data=content,
+                            file_name=f"{r['ticker']}_report.md",
+                            mime="text/markdown",
+                            key=f"dl_{r['id']}",
+                        )
+                        st.markdown(content)
+                    except Exception as e:
+                        st.error(f"Failed to load report: {e}")
     else:
         st.info("No requests match the selected filters.")
