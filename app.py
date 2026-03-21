@@ -60,14 +60,25 @@ if st.session_state["authentication_status"] is None:
 # ---------------------------------------------------------------------------
 # Authenticated — show dashboard
 # ---------------------------------------------------------------------------
+
+# Track last refresh time
+if "last_refreshed" not in st.session_state:
+    st.session_state["last_refreshed"] = datetime.now()
+
 with st.sidebar:
     st.write(f"Welcome, **{st.session_state['name']}**")
     authenticator.logout("Logout")
+    st.divider()
+    if st.button("Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state["last_refreshed"] = datetime.now()
+        st.rerun()
+    st.caption(f"Last refreshed: {st.session_state['last_refreshed'].strftime('%Y-%m-%d %H:%M:%S')}")
 
 st.title("BioResearch Eval Dashboard")
 
 # ---------------------------------------------------------------------------
-# Load data (cached 5 min)
+# Load data (cached indefinitely until manual refresh)
 # ---------------------------------------------------------------------------
 data = get_eval_dataset()
 
@@ -159,11 +170,10 @@ with tab_watchlist:
             df = pd.DataFrame(rows)
             st.dataframe(df, width="stretch", hide_index=True)
 
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
             st.caption(
-                f"Current prices fetched from FMP (cached 10 min). "
-                f"Last refresh: {now}. "
-                f"Prediction prices captured at each run's timestamp."
+                f"Prices fetched from FMP. "
+                f"Last refresh: {st.session_state['last_refreshed'].strftime('%Y-%m-%d %H:%M')}. "
+                f"Use the Refresh Data button in the sidebar to update."
             )
 
             col1, col2, col3, col4 = st.columns(4)

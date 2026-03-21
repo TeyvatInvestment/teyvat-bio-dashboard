@@ -74,9 +74,9 @@ def _row_to_prediction(row: dict) -> PipelinePrediction:
     )
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def get_eval_dataset() -> dict:
-    """Load and cache the full eval dataset from Supabase (5 min TTL).
+    """Load and cache the full eval dataset from Supabase.
 
     Returns a dict with all Pydantic/dataclass objects converted to dicts
     for Streamlit serialization.
@@ -107,9 +107,9 @@ def get_eval_dataset() -> dict:
     }
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def get_reports(ticker: str | None = None) -> list[dict]:
-    """Load report metadata from eval_reports table (5 min TTL)."""
+    """Load report metadata from eval_reports table."""
     client = _get_supabase_client()
     query = client.table("eval_reports").select("*").order("report_timestamp", desc=True)
     if ticker:
@@ -125,9 +125,9 @@ def get_report_content(storage_path: str) -> str:
     return content.decode("utf-8")
 
 
-@st.cache_data(ttl=600)
+@st.cache_data
 def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
-    """Fetch current prices for multiple tickers via FMP batch quote (cached 10 min).
+    """Fetch current prices for multiple tickers via FMP batch quote.
 
     Uses a single API call for all tickers: /v3/quote/AAPL,MSFT,...
     Returns {ticker: {"price": float, "prev_close": float} | None}.
