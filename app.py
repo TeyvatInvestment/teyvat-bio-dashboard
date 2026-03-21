@@ -11,13 +11,19 @@ Tabs:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
 
-from data_loader import get_current_prices, get_eval_dataset, get_report_content, get_reports
+from data_loader import (
+    get_current_prices,
+    get_eval_dataset,
+    get_report_content,
+    get_reports,
+    record_outcome_from_ui,
+)
 
 # ---------------------------------------------------------------------------
 # Page config (must be first st call)
@@ -185,6 +191,120 @@ with tab_watchlist:
             buys = sum(1 for w in filtered if w["action"] == "BUY")
             col4.metric("BUY Signals", buys)
 
+    # -------------------------------------------------------------------
+    # Record Outcome — pair predictions with actual catalyst results
+    # -------------------------------------------------------------------
+    st.divider()
+    st.subheader("Record Outcome")
+
+    # Show success/error from previous submission (persisted via session_state)
+    if st.session_state.get("_record_success"):
+        st.success(st.session_state.pop("_record_success"))
+        for w in st.session_state.pop("_record_warnings", []):
+            st.warning(w)
+
+    OUTCOMES_LIST = ["APPROVED", "CRL", "MET_ENDPOINT", "FAILED", "DELAYED"]
+    EVENT_TYPES_LIST = ["PDUFA", "Phase3_Readout", "AdCom", "NDA", "EarningsReadout"]
+
+    # Pre-fill options from OVERDUE watchlist entries
+    overdue_entries = [w for w in watchlist if w["status"] == "OVERDUE"]
+    prefill_options: dict[str, dict | None] = {"-- Manual entry --": None}
+    for entry in overdue_entries:
+        company = entry.get("company_name") or entry["ticker"]
+        label = f"{entry['ticker']} \u2014 {company} (catalyst: {entry['catalyst_date'] or 'N/A'})"
+        prefill_options[label] = entry
+
+    if overdue_entries:
+        selected_label = st.selectbox(
+            "Pre-fill from OVERDUE watchlist",
+            list(prefill_options.keys()),
+            help="Select an overdue entry to pre-fill the form, or choose manual entry.",
+        )
+        prefill = prefill_options[selected_label]
+    else:
+        prefill = None
+
+    # Compute form defaults from prefill
+    default_ticker = prefill["ticker"] if prefill else ""
+    default_company = (prefill.get("company_name") or "") if prefill else ""
+    if prefill and prefill.get("catalyst_date"):
+        try:
+            default_date = date.fromisoformat(str(prefill["catalyst_date"]))
+        except (ValueError, TypeError):
+            default_date = date.today()
+    else:
+        default_date = date.today()
+
+    with st.form("record_outcome_form", clear_on_submit=True):
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            rec_ticker = st.text_input("Ticker", value=default_ticker)
+            rec_date = st.date_input("Event Date", value=default_date)
+            rec_outcome = st.selectbox("Outcome", OUTCOMES_LIST)
+
+        with col_right:
+            rec_company = st.text_input(
+                "Company Name",
+                value=default_company,
+                help="Optional. Auto-resolved from predictions if empty.",
+            )
+            rec_event_type = st.selectbox("Event Type", EVENT_TYPES_LIST)
+            rec_notes = st.text_input("Notes (optional)")
+
+        with st.expander("Manual Price Overrides"):
+            st.caption(
+                "Leave at 0 to auto-fetch from FMP. "
+                "Set positive values to override."
+            )
+            price_col1, price_col2 = st.columns(2)
+            rec_price_before = price_col1.number_input(
+                "Price Before (T\u22121)", min_value=0.0, value=0.0,
+                step=0.01, format="%.2f",
+            )
+            rec_price_after = price_col2.number_input(
+                "Price After (T+1)", min_value=0.0, value=0.0,
+                step=0.01, format="%.2f",
+            )
+
+        submitted = st.form_submit_button("Record Outcome", type="primary")
+
+        if submitted:
+            if not rec_ticker.strip():
+                st.error("Ticker is required.")
+            else:
+                with st.spinner("Fetching prices and recording outcome..."):
+                    try:
+                        result = record_outcome_from_ui(
+                            ticker=rec_ticker.strip().upper(),
+                            event_type=rec_event_type,
+                            event_date=rec_date,
+                            outcome=rec_outcome,
+                            company_name=rec_company.strip() or None,
+                            notes=rec_notes.strip() or None,
+                            price_before_override=(
+                                rec_price_before if rec_price_before > 0 else None
+                            ),
+                            price_after_override=(
+                                rec_price_after if rec_price_after > 0 else None
+                            ),
+                        )
+                        outcome_data = result["outcome"]
+                        pct = outcome_data["price_change_pct"]
+                        st.session_state["_record_success"] = (
+                            f"Recorded: {outcome_data['ticker']} "
+                            f"{outcome_data['event_type']} on "
+                            f"{outcome_data['event_date']} "
+                            f"\u2192 {outcome_data['outcome']} "
+                            f"(return: {pct:+.1%})"
+                        )
+                        st.session_state["_record_warnings"] = result["warnings"]
+                        st.cache_data.clear()
+                        st.session_state["last_refreshed"] = datetime.now()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to record: {e}")
+
 # ===========================================================================
 # Tab 2: Scorecard
 # ===========================================================================
@@ -194,8 +314,8 @@ with tab_scorecard:
 
     if n_paired == 0:
         st.info(
-            "No paired events yet. Record outcomes with "
-            "`bioresearch eval record TICKER --event-date DATE --outcome OUTCOME --event-type TYPE`."
+            "No paired events yet. Record outcomes using the form in the "
+            "Watchlist tab, or via the CLI (`bioresearch eval record`)."
         )
     else:
         st.subheader(f"Core Metrics ({n_paired} paired events)")

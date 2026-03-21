@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import date, timedelta
 
+import httpx
 import streamlit as st
 from supabase import create_client
 
@@ -134,8 +136,6 @@ def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
     """
     import asyncio
 
-    import httpx
-
     api_key = st.secrets["fmp"]["api_key"]
 
     async def _fetch() -> dict[str, dict | None]:
@@ -162,3 +162,176 @@ def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
         return asyncio.run(_fetch())
     except Exception:
         return {t: None for t in tickers}
+
+
+# ---------------------------------------------------------------------------
+# Write helpers — outcome recording from the dashboard
+# ---------------------------------------------------------------------------
+
+VALID_OUTCOMES = frozenset({"APPROVED", "CRL", "MET_ENDPOINT", "FAILED", "DELAYED"})
+VALID_EVENT_TYPES = frozenset({"PDUFA", "Phase3_Readout", "AdCom", "NDA", "EarningsReadout"})
+
+
+def _fetch_event_prices(ticker: str, event_date: date) -> dict:
+    """Fetch T-1 and T+1 closing prices using FMP historical price API.
+
+    Queries a 10-day window around the event date to handle weekends/holidays.
+    Returns {"price_before": float|None, "price_after": float|None, "warnings": list[str]}.
+    """
+    api_key = st.secrets["fmp"]["api_key"]
+    from_date = event_date - timedelta(days=10)
+    to_date = event_date + timedelta(days=10)
+
+    try:
+        resp = httpx.get(
+            f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}",
+            params={
+                "apikey": api_key,
+                "from": from_date.isoformat(),
+                "to": to_date.isoformat(),
+            },
+            timeout=10,
+        )
+        data = resp.json()
+    except Exception as exc:
+        return {
+            "price_before": None,
+            "price_after": None,
+            "warnings": [f"FMP price fetch failed: {exc}"],
+        }
+
+    historicals = data.get("historical", [])
+    warnings: list[str] = []
+    price_before = None
+    price_after = None
+
+    sorted_bars = sorted(historicals, key=lambda b: b["date"])
+
+    # T-1: last trading day strictly before event_date
+    for bar in reversed(sorted_bars):
+        bar_date = date.fromisoformat(bar["date"])
+        if bar_date < event_date:
+            price_before = bar["close"]
+            break
+
+    # T+1: first trading day strictly after event_date
+    for bar in sorted_bars:
+        bar_date = date.fromisoformat(bar["date"])
+        if bar_date > event_date:
+            price_after = bar["close"]
+            break
+
+    if price_before is None:
+        warnings.append(f"No T-1 price found for {ticker} before {event_date}")
+    if price_after is None:
+        warnings.append(f"No T+1 price found for {ticker} after {event_date}")
+
+    return {"price_before": price_before, "price_after": price_after, "warnings": warnings}
+
+
+def record_outcome_from_ui(
+    ticker: str,
+    event_type: str,
+    event_date: date,
+    outcome: str,
+    company_name: str | None = None,
+    notes: str | None = None,
+    price_before_override: float | None = None,
+    price_after_override: float | None = None,
+) -> dict:
+    """Record a catalyst outcome to Supabase with auto-fetched FMP prices.
+
+    Validates inputs, checks for duplicates, resolves company_name from
+    predictions if not provided, fetches T-1/T+1 prices via FMP historical
+    API, and inserts the outcome row into eval_outcomes.
+
+    Returns dict with ``outcome`` (row data) and ``warnings`` (list[str]).
+    Raises ValueError on validation/duplicate/price errors.
+    """
+    ticker = ticker.upper()
+
+    if outcome not in VALID_OUTCOMES:
+        raise ValueError(
+            f"Invalid outcome '{outcome}'. Must be one of: {', '.join(sorted(VALID_OUTCOMES))}"
+        )
+    if event_type not in VALID_EVENT_TYPES:
+        raise ValueError(
+            f"Invalid event_type '{event_type}'. "
+            f"Must be one of: {', '.join(sorted(VALID_EVENT_TYPES))}"
+        )
+
+    client = _get_supabase_client()
+
+    # Check for duplicates
+    resp = (
+        client.table("eval_outcomes")
+        .select("id")
+        .eq("ticker", ticker)
+        .eq("event_type", event_type)
+        .eq("event_date", event_date.isoformat())
+        .limit(1)
+        .execute()
+    )
+    if resp.data:
+        raise ValueError(f"Outcome already exists: {ticker} {event_type} on {event_date}")
+
+    # Resolve company_name from predictions if not provided
+    if not company_name:
+        resp = (
+            client.table("eval_predictions")
+            .select("company_name")
+            .eq("ticker", ticker)
+            .neq("company_name", "")
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            company_name = resp.data[0]["company_name"]
+        else:
+            company_name = ticker
+
+    # Fetch prices from FMP
+    warnings: list[str] = []
+    prices = _fetch_event_prices(ticker, event_date)
+    warnings.extend(prices["warnings"])
+
+    price_before = (
+        price_before_override if price_before_override is not None else prices["price_before"]
+    )
+    price_after = (
+        price_after_override if price_after_override is not None else prices["price_after"]
+    )
+
+    if price_before is None:
+        raise ValueError(
+            f"Could not determine price_before for {ticker} on {event_date}. "
+            "Use manual price override."
+        )
+    if price_after is None:
+        raise ValueError(
+            f"Could not determine price_after for {ticker} on {event_date}. "
+            "Use manual price override."
+        )
+    if price_before <= 0:
+        raise ValueError(f"price_before must be positive (got {price_before}).")
+
+    price_change_pct = (price_after - price_before) / price_before
+
+    # Build row and insert
+    row: dict = {
+        "ticker": ticker,
+        "company_name": company_name,
+        "event_type": event_type,
+        "event_date": event_date.isoformat(),
+        "outcome": outcome,
+        "price_before": round(price_before, 2),
+        "price_after": round(price_after, 2),
+        "price_change_pct": round(price_change_pct, 4),
+    }
+    if notes:
+        row["notes"] = notes
+
+    client.table("eval_outcomes").insert(row).execute()
+    logger.info("Outcome recorded: %s %s %s → %s", ticker, event_type, event_date, outcome)
+
+    return {"outcome": row, "warnings": warnings}
