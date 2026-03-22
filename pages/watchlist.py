@@ -214,7 +214,7 @@ if _latest_buy:
             _points.append((_pred["entry_price_limit"], "Entry"))
         _points.sort(key=lambda x: x[0])
         st.markdown(
-            "  →  ".join(f"**{lbl}** ${px:.2f}" for px, lbl in _points)
+            "  →  ".join(f"**{lbl}** \\${px:.2f}" for px, lbl in _points)
         )
 
         # Price levels from full execution plan
