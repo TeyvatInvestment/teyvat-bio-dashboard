@@ -19,6 +19,7 @@ def build_watchlist(
     if today is None:
         today = date.today()
 
+    outcome_keys = {(o.ticker, o.event_date) for o in outcomes}
     outcome_tickers = {o.ticker for o in outcomes}
 
     # Most recent prediction per ticker
@@ -30,7 +31,11 @@ def build_watchlist(
 
     entries: list[WatchlistEntry] = []
     for ticker, pred in latest_by_ticker.items():
-        has_outcome = ticker in outcome_tickers
+        has_outcome = (
+            (ticker, pred.catalyst_date) in outcome_keys
+            if pred.catalyst_date
+            else ticker in outcome_tickers
+        )
 
         if has_outcome:
             status = "RECORDED"

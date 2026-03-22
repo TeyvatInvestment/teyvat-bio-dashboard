@@ -38,19 +38,26 @@ else:
                 "Conviction": r.get("net_conviction", "N/A"),
                 "PTS Gap": f"{r['pts_gap']:+.2f}" if r.get("pts_gap") is not None else "N/A",
                 "Risk": r.get("risk_decision", "N/A"),
-                "Quality": f"{r['data_quality']:.2f}" if r.get("data_quality") else "N/A",
+                "Quality": f"{r['data_quality']:.2f}" if r.get("data_quality") is not None else "N/A",
                 "Date": r["report_timestamp"][:10],
                 "Size": f"{r.get('file_size_bytes', 0) / 1024:.0f} KB",
             }
         )
 
-    st.dataframe(pd.DataFrame(report_rows), width="stretch", hide_index=True)
+    st.dataframe(pd.DataFrame(report_rows), use_container_width=True, hide_index=True)
 
     # --- Report viewer ---
     st.divider()
     report_options = {
-        f"{r['ticker']} \u2014 {r['report_timestamp'][:10]}": r["storage_path"] for r in reports
+        f"{r['ticker']} \u2014 {r['report_timestamp'][:10]} ({r.get('action', 'N/A')})": r["storage_path"]
+        for i, r in enumerate(reports)
     }
+    # If there are still collisions (same ticker+date+action), deduplicate with index
+    if len(report_options) < len(reports):
+        report_options = {
+            f"{r['ticker']} \u2014 {r['report_timestamp'][:10]} #{i+1}": r["storage_path"]
+            for i, r in enumerate(reports)
+        }
     selected_label = st.selectbox("Select report to view", list(report_options.keys()))
 
     if selected_label:

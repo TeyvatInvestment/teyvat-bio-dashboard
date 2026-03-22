@@ -7,6 +7,7 @@ Credentials come from st.secrets (configured in the Community Cloud dashboard).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict
 from datetime import date, timedelta
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _get_supabase_client():
     """Create a Supabase sync client from st.secrets."""
     url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["service_key"]
+    key = st.secrets["supabase"]["service_role_key"]
     return create_client(url, key)
 
 
@@ -112,7 +113,7 @@ def get_eval_dataset() -> dict:
     }
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_reports(ticker: str | None = None) -> list[dict]:
     """Load report metadata from eval_reports table."""
     client = _get_supabase_client()
@@ -123,6 +124,7 @@ def get_reports(ticker: str | None = None) -> list[dict]:
     return resp.data
 
 
+@st.cache_data(ttl=3600)
 def get_report_content(storage_path: str) -> str:
     """Download a report's Markdown content from the reports storage bucket."""
     client = _get_supabase_client()
@@ -130,41 +132,35 @@ def get_report_content(storage_path: str) -> str:
     return content.decode("utf-8")
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_current_prices(tickers: tuple[str, ...]) -> dict[str, dict | None]:
     """Fetch current prices for multiple tickers via FMP batch quote.
 
     Uses a single API call for all tickers: /v3/quote/AAPL,MSFT,...
     Returns {ticker: {"price": float, "prev_close": float} | None}.
     """
-    import asyncio
-
     api_key = st.secrets["fmp"]["api_key"]
 
-    async def _fetch() -> dict[str, dict | None]:
-        async with httpx.AsyncClient(timeout=10) as client:
-            # FMP supports comma-separated tickers in a single request
-            symbols = ",".join(tickers)
-            resp = await client.get(
-                f"https://financialmodelingprep.com/api/v3/quote/{symbols}",
-                params={"apikey": api_key},
-            )
-            data = resp.json()
-
-        results: dict[str, dict | None] = {t: None for t in tickers}
-        if isinstance(data, list):
-            for q in data:
-                symbol = q.get("symbol", "")
-                results[symbol] = {
-                    "price": round(float(q.get("price", 0)), 2),
-                    "prev_close": round(float(q.get("previousClose", 0)), 2),
-                }
-        return results
-
     try:
-        return asyncio.run(_fetch())
+        symbols = ",".join(tickers)
+        resp = httpx.get(
+            f"https://financialmodelingprep.com/api/v3/quote/{symbols}",
+            params={"apikey": api_key},
+            timeout=10,
+        )
+        data = resp.json()
     except Exception:
         return {t: None for t in tickers}
+
+    results: dict[str, dict | None] = {t: None for t in tickers}
+    if isinstance(data, list):
+        for q in data:
+            symbol = q.get("symbol", "")
+            results[symbol] = {
+                "price": round(float(q.get("price", 0)), 2),
+                "prev_close": round(float(q.get("previousClose", 0)), 2),
+            }
+    return results
 
 
 @st.cache_data(ttl=86400)  # Cache for 1 day
@@ -173,33 +169,28 @@ def get_company_profiles(tickers: tuple[str, ...]) -> dict[str, str]:
 
     Returns {ticker: company_name} mapping. Cached for 1 day.
     """
-    import asyncio
-
     api_key = st.secrets["fmp"]["api_key"]
 
-    async def _fetch() -> dict[str, str]:
-        async with httpx.AsyncClient(timeout=10) as client:
-            symbols = ",".join(tickers)
-            resp = await client.get(
-                f"https://financialmodelingprep.com/api/v3/profile/{symbols}",
-                params={"apikey": api_key},
-            )
-            data = resp.json()
-
-        results: dict[str, str] = {}
-        if isinstance(data, list):
-            for profile in data:
-                symbol = profile.get("symbol", "")
-                name = profile.get("companyName", "")
-                if symbol and name:
-                    results[symbol] = name
-        return results
-
     try:
-        return asyncio.run(_fetch())
+        symbols = ",".join(tickers)
+        resp = httpx.get(
+            f"https://financialmodelingprep.com/api/v3/profile/{symbols}",
+            params={"apikey": api_key},
+            timeout=10,
+        )
+        data = resp.json()
     except Exception:
         logger.warning("Failed to fetch FMP company profiles")
         return {}
+
+    results: dict[str, str] = {}
+    if isinstance(data, list):
+        for profile in data:
+            symbol = profile.get("symbol", "")
+            name = profile.get("companyName", "")
+            if symbol and name:
+                results[symbol] = name
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +279,13 @@ def record_outcome_from_ui(
     """
     ticker = ticker.upper()
 
+    if not re.match(r'^[A-Z]{1,10}$', ticker):
+        raise ValueError(f"Invalid ticker format: '{ticker}'. Must be 1-10 uppercase letters.")
+    if company_name and len(company_name) > 200:
+        raise ValueError("Company name must be under 200 characters.")
+    if notes and len(notes) > 2000:
+        raise ValueError("Notes must be under 2000 characters.")
+
     if outcome not in VALID_OUTCOMES:
         raise ValueError(
             f"Invalid outcome '{outcome}'. Must be one of: {', '.join(sorted(VALID_OUTCOMES))}"
@@ -353,6 +351,8 @@ def record_outcome_from_ui(
         )
     if price_before <= 0:
         raise ValueError(f"price_before must be positive (got {price_before}).")
+    if price_after < 0:
+        raise ValueError(f"price_after must be non-negative (got {price_after}).")
 
     price_change_pct = (price_after - price_before) / price_before
 
@@ -384,7 +384,7 @@ VALID_REQUEST_TYPES = frozenset({"full_analysis", "quick_update", "deep_dive"})
 VALID_PRIORITIES = frozenset({"normal", "high", "urgent"})
 
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def get_report_requests() -> list[dict]:
     """Load report requests from the report_requests table."""
     client = _get_supabase_client()
@@ -410,6 +410,11 @@ def submit_report_request(
     Raises ValueError on invalid inputs or duplicate pending requests.
     """
     ticker = ticker.upper()
+
+    if not re.match(r'^[A-Z]{1,10}$', ticker):
+        raise ValueError(f"Invalid ticker format: '{ticker}'. Must be 1-10 uppercase letters.")
+    if notes and len(notes) > 2000:
+        raise ValueError("Notes must be under 2000 characters.")
 
     if request_type not in VALID_REQUEST_TYPES:
         raise ValueError(

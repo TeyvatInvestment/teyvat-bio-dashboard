@@ -81,11 +81,13 @@ def _std(values: list[float]) -> float:
     if len(values) < 2:
         return 0.0
     mean = sum(values) / len(values)
-    variance = sum((x - mean) ** 2 for x in values) / len(values)
+    variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
     return math.sqrt(variance)
 
 
 def _majority(values: list[str]) -> str:
+    if not values:
+        return ""
     counts: dict[str, int] = {}
     for v in values:
         counts[v] = counts.get(v, 0) + 1

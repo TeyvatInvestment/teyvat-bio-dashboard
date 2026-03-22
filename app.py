@@ -18,6 +18,8 @@ from datetime import datetime
 import streamlit as st
 import streamlit_authenticator as stauth
 
+from data_loader import get_current_prices, get_eval_dataset, get_report_requests, get_reports
+
 # ---------------------------------------------------------------------------
 # Page config (must be first st call)
 # ---------------------------------------------------------------------------
@@ -70,7 +72,10 @@ with st.sidebar:
     authenticator.logout("Logout")
     st.divider()
     if st.button("Refresh Data", use_container_width=True):
-        st.cache_data.clear()
+        get_eval_dataset.clear()
+        get_current_prices.clear()
+        get_reports.clear()
+        get_report_requests.clear()
         st.session_state["last_refreshed"] = datetime.now()
         st.rerun()
     st.caption(f"Last refreshed: {st.session_state['last_refreshed'].strftime('%Y-%m-%d %H:%M:%S')}")

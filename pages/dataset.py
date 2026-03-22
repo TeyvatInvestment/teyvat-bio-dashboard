@@ -42,13 +42,13 @@ if data["outcomes"]:
                     "Event": o["event_type"],
                     "Date": o["event_date"],
                     "Outcome": o["outcome"],
-                    "Price Before (T-1)": f"${o['price_before']:.2f}",
-                    "Price After (T+1)": f"${o['price_after']:.2f}",
-                    "Return": f"{o['price_change_pct']:+.0%}",
+                    "Price Before (T-1)": f"${o['price_before']:.2f}" if o.get('price_before') is not None else "N/A",
+                    "Price After (T+1)": f"${o['price_after']:.2f}" if o.get('price_after') is not None else "N/A",
+                    "Return": f"{o['price_change_pct']:+.0%}" if o.get('price_change_pct') is not None else "N/A",
                 }
             )
         st.dataframe(
-            pd.DataFrame(outcome_rows), width="stretch", hide_index=True
+            pd.DataFrame(outcome_rows), use_container_width=True, hide_index=True
         )
 
 # --- Predictions awaiting outcome ---
@@ -69,7 +69,7 @@ if unpaired_preds:
                     "Ticker": p["ticker"],
                     "Action": p["action"],
                     "Catalyst": p.get("next_catalyst", ""),
-                    "Catalyst Date": p.get("catalyst_date", "N/A"),
+                    "Catalyst Date": p.get("catalyst_date") or "N/A",
                     "Science PTS": f"{p['science_pts']:.0%}",
                     "Market PTS": f"{p['market_pts']:.0%}",
                     "PTS Gap": f"{p['pts_gap']:+.2f}",
@@ -78,7 +78,7 @@ if unpaired_preds:
                 }
             )
         st.dataframe(
-            pd.DataFrame(pred_rows), width="stretch", hide_index=True
+            pd.DataFrame(pred_rows), use_container_width=True, hide_index=True
         )
 
 # --- Unpaired outcomes ---

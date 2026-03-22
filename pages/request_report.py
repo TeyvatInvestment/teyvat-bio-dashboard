@@ -72,7 +72,7 @@ with st.form("request_report_form", clear_on_submit=True):
                 st.session_state["_request_success"] = (
                     f"Report request submitted for {req_ticker.strip().upper()}"
                 )
-                st.cache_data.clear()
+                get_report_requests.clear()
                 st.session_state["last_refreshed"] = datetime.now()
                 st.rerun()
             except Exception as e:
@@ -119,7 +119,7 @@ else:
                 row["Error"] = ""
             rows.append(row)
 
-        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         # Show download buttons for completed reports with a storage path
         completed_with_reports = [

@@ -32,6 +32,8 @@ def _company_name(ticker: str, existing: str = "") -> str:
 
 st.title("Watchlist")
 
+_filtered_tickers: set[str] = set()
+
 if not watchlist:
     st.info("No predictions captured yet. Run the pipeline to generate predictions.")
 else:
@@ -53,6 +55,8 @@ else:
         and w["net_conviction"] >= min_conviction
     ]
 
+    _filtered_tickers = {w["ticker"] for w in filtered}
+
     if not filtered:
         st.warning("No entries match the current filters.")
     else:
@@ -68,16 +72,19 @@ else:
         all_tickers = tuple(sorted({w["ticker"] for w in filtered}))
         prices_map = get_current_prices(all_tickers)
 
+        # Build latest prediction per ticker for accurate Price @ Pred
+        _latest_pred: dict[str, dict] = {}
+        for p in data["predictions"]:
+            t = p["ticker"]
+            if t not in _latest_pred or p["run_timestamp"] > _latest_pred[t]["run_timestamp"]:
+                _latest_pred[t] = p
+
         rows = []
         for w in filtered:
             price_info = prices_map.get(w["ticker"])
             current_price = price_info["price"] if price_info else None
-            pred_price = None
-
-            for p in data["predictions"]:
-                if p["ticker"] == w["ticker"]:
-                    pred_price = p["current_price"]
-                    break
+            _matched = _latest_pred.get(w["ticker"])
+            pred_price = _matched["current_price"] if _matched else None
 
             price_delta = None
             if current_price is not None and pred_price is not None and pred_price > 0:
@@ -98,7 +105,7 @@ else:
                     "Success Price": f"${w['success_price']:.2f}" if w.get("success_price") else "N/A",
                     "Failure Price": f"${w['failure_price']:.2f}" if w.get("failure_price") else "N/A",
                     "rNPV Price": f"${w['rnpv_per_share']:.2f}" if w.get("rnpv_per_share") else "N/A",
-                    "Price @ Pred": f"${pred_price:.2f}" if pred_price else "N/A",
+                    "Price @ Pred": f"${pred_price:.2f}" if pred_price is not None else "N/A",
                     "Current Price": f"${current_price:.2f}" if current_price else "N/A",
                     "Price Change": f"{price_delta:+.1%}"
                     if price_delta is not None
@@ -108,7 +115,7 @@ else:
             )
 
         df = pd.DataFrame(rows)
-        st.dataframe(df, width="stretch", hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
         st.caption(
             f"Prices fetched from FMP. "
@@ -131,7 +138,9 @@ else:
 _buy_predictions = [
     p
     for p in data["predictions"]
-    if p["action"] == "BUY" and p["risk_decision"] in ("APPROVED", "RESIZED")
+    if p["action"] == "BUY"
+    and p["risk_decision"] in ("APPROVED", "RESIZED")
+    and p["ticker"] in _filtered_tickers
 ]
 # Keep latest prediction per ticker
 _latest_buy: dict[str, dict] = {}
@@ -223,7 +232,7 @@ if _latest_buy:
                     "Rationale": lvl["rationale"],
                 })
             st.dataframe(
-                pd.DataFrame(_lvl_rows), width="stretch", hide_index=True
+                pd.DataFrame(_lvl_rows), use_container_width=True, hide_index=True
             )
 
         # Scenario actions from full execution plan
@@ -239,7 +248,7 @@ if _latest_buy:
                     "Rationale": sc["rationale"],
                 })
             st.dataframe(
-                pd.DataFrame(_sc_rows), width="stretch", hide_index=True
+                pd.DataFrame(_sc_rows), use_container_width=True, hide_index=True
             )
 
         # Risk summary
@@ -275,16 +284,15 @@ if _latest_buy:
             with _time_left:
                 _rev = _plan.get("review_date")
                 st.markdown(f"**Review Date:** {_rev or 'N/A'}")
-                st.markdown(
-                    f"**Time Stop:** {_plan.get('time_stop_action', 'N/A')}"
-                )
+                _ts = str(_plan.get('time_stop_action', 'N/A'))
+                st.markdown(f"**Time Stop:** {_ts.replace('$', '\\$').replace('*', '\\*').replace('_', '\\_')}")
             with _time_right:
                 _hedge = _plan.get("hedge_recommendation")
                 if _hedge:
-                    st.markdown(f"**Hedge:** {_hedge}")
-                st.markdown(
-                    f"**Sizing Rationale:** {_plan.get('sizing_rationale', 'N/A')}"
-                )
+                    _h = str(_hedge).replace('$', '\\$').replace('*', '\\*').replace('_', '\\_')
+                    st.markdown(f"**Hedge:** {_h}")
+                _sr = str(_plan.get('sizing_rationale', 'N/A'))
+                st.markdown(f"**Sizing Rationale:** {_sr.replace('$', '\\$').replace('*', '\\*').replace('_', '\\_')}")
     else:
         st.info(
             "Binary decomposition not available for this prediction. "
@@ -399,7 +407,7 @@ with st.form("record_outcome_form", clear_on_submit=True):
                         f"(return: {pct:+.1%})"
                     )
                     st.session_state["_record_warnings"] = result["warnings"]
-                    st.cache_data.clear()
+                    get_eval_dataset.clear()
                     st.session_state["last_refreshed"] = datetime.now()
                     st.rerun()
                 except Exception as e:
