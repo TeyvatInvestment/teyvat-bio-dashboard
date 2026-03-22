@@ -57,6 +57,8 @@ def _row_to_prediction(row: dict) -> PipelinePrediction:
         catalyst_date=row.get("catalyst_date"),
         market_pts=row["market_pts"],
         rnpv_per_share=row["rnpv_per_share"],
+        success_price=row.get("success_price"),
+        failure_price=row.get("failure_price"),
         current_price=row["current_price"],
         upside_pct=row["upside_pct"],
         pts_gap=row["pts_gap"],

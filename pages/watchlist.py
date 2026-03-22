@@ -95,6 +95,9 @@ else:
                     "Sci PTS": f"{w['science_pts']:.0%}",
                     "Mkt PTS": f"{w['market_pts']:.0%}",
                     "Conviction": w["net_conviction"],
+                    "Success Price": f"${w['success_price']:.2f}" if w.get("success_price") else "N/A",
+                    "Failure Price": f"${w['failure_price']:.2f}" if w.get("failure_price") else "N/A",
+                    "rNPV Price": f"${w['rnpv_per_share']:.2f}" if w.get("rnpv_per_share") else "N/A",
                     "Price @ Pred": f"${pred_price:.2f}" if pred_price else "N/A",
                     "Current Price": f"${current_price:.2f}" if current_price else "N/A",
                     "Price Change": f"{price_delta:+.1%}"

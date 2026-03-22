@@ -45,6 +45,8 @@ class PipelinePrediction(BaseModel):
     # Fin Analyst
     market_pts: float = Field(ge=0.0, le=1.0)
     rnpv_per_share: float
+    success_price: float | None = None
+    failure_price: float | None = None
     current_price: float
     upside_pct: float
 
@@ -140,3 +142,6 @@ class WatchlistEntry(BaseModel):
     run_date: date
     status: str  # UPCOMING | DUE_SOON | OVERDUE | RECORDED | UNKNOWN
     days_until: int | None = None
+    success_price: float | None = None
+    failure_price: float | None = None
+    rnpv_per_share: float | None = None

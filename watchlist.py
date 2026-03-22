@@ -60,6 +60,9 @@ def build_watchlist(
                 run_date=pred.run_timestamp.date(),
                 status=status,
                 days_until=days_until,
+                success_price=pred.success_price,
+                failure_price=pred.failure_price,
+                rnpv_per_share=pred.rnpv_per_share,
             )
         )
 
