@@ -115,7 +115,7 @@ else:
             )
 
         df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         st.caption(
             f"Prices fetched from FMP. "
@@ -232,7 +232,7 @@ if _latest_buy:
                     "Rationale": lvl["rationale"],
                 })
             st.dataframe(
-                pd.DataFrame(_lvl_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(_lvl_rows), width="stretch", hide_index=True
             )
 
         # Scenario actions from full execution plan
@@ -248,7 +248,7 @@ if _latest_buy:
                     "Rationale": sc["rationale"],
                 })
             st.dataframe(
-                pd.DataFrame(_sc_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(_sc_rows), width="stretch", hide_index=True
             )
 
         # Risk summary

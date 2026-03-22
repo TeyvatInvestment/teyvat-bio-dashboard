@@ -44,7 +44,7 @@ else:
             }
         )
 
-    st.dataframe(pd.DataFrame(report_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(report_rows), width="stretch", hide_index=True)
 
     # --- Report viewer ---
     st.divider()

@@ -94,7 +94,7 @@ else:
                 }
             )
         st.dataframe(
-            pd.DataFrame(event_rows), use_container_width=True, hide_index=True
+            pd.DataFrame(event_rows), width="stretch", hide_index=True
         )
 
     # --- Stratified metrics ---
@@ -118,7 +118,7 @@ else:
                     }
                 )
             st.dataframe(
-                pd.DataFrame(type_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(type_rows), width="stretch", hide_index=True
             )
 
         by_conv = stratified.get("by_conviction", [])
@@ -137,5 +137,5 @@ else:
                     }
                 )
             st.dataframe(
-                pd.DataFrame(conv_rows), use_container_width=True, hide_index=True
+                pd.DataFrame(conv_rows), width="stretch", hide_index=True
             )

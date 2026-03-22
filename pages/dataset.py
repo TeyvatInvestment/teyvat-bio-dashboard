@@ -48,7 +48,7 @@ if data["outcomes"]:
                 }
             )
         st.dataframe(
-            pd.DataFrame(outcome_rows), use_container_width=True, hide_index=True
+            pd.DataFrame(outcome_rows), width="stretch", hide_index=True
         )
 
 # --- Predictions awaiting outcome ---
@@ -78,7 +78,7 @@ if unpaired_preds:
                 }
             )
         st.dataframe(
-            pd.DataFrame(pred_rows), use_container_width=True, hide_index=True
+            pd.DataFrame(pred_rows), width="stretch", hide_index=True
         )
 
 # --- Unpaired outcomes ---
