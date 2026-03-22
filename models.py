@@ -68,6 +68,7 @@ class PipelinePrediction(BaseModel):
     # Execution Planner
     entry_price_limit: float | None = None
     stop_loss_price: float | None = None
+    execution_plan: dict | None = None  # Full serialized ExecutionPlan (JSONB)
 
     # Quality
     data_quality_score: float

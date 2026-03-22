@@ -126,6 +126,172 @@ else:
         col4.metric("BUY Signals", buys)
 
 # -------------------------------------------------------------------
+# Execution Detail — binary decomposition + price levels for BUY picks
+# -------------------------------------------------------------------
+_buy_predictions = [
+    p
+    for p in data["predictions"]
+    if p["action"] == "BUY" and p["risk_decision"] in ("APPROVED", "RESIZED")
+]
+# Keep latest prediction per ticker
+_latest_buy: dict[str, dict] = {}
+for _p in _buy_predictions:
+    _t = _p["ticker"]
+    if _t not in _latest_buy or _p["run_timestamp"] > _latest_buy[_t]["run_timestamp"]:
+        _latest_buy[_t] = _p
+
+if _latest_buy:
+    st.divider()
+    st.subheader("Execution Detail")
+
+    _buy_tickers = sorted(_latest_buy.keys())
+    _ticker_labels = {
+        f"{t} — {_company_name(t, _latest_buy[t].get('company_name', ''))}": t
+        for t in _buy_tickers
+    }
+    _selected_label = st.selectbox(
+        "Select position", list(_ticker_labels.keys()), key="exec_ticker"
+    )
+    _sel_ticker = _ticker_labels[_selected_label]
+    _pred = _latest_buy[_sel_ticker]
+
+    # Live price
+    _exec_prices = get_current_prices((_sel_ticker,))
+    _price_info = _exec_prices.get(_sel_ticker)
+    _live = _price_info["price"] if _price_info else None
+    _pred_price = _pred["current_price"]
+    _ref = _live or _pred_price
+
+    _success = _pred.get("success_price")
+    _failure = _pred.get("failure_price")
+    _sci_pts = _pred["science_pts"]
+    _plan = _pred.get("execution_plan")
+
+    # Header with live price
+    _hdr_left, _hdr_right = st.columns(2)
+    with _hdr_left:
+        st.markdown("#### Binary Event Decomposition")
+    with _hdr_right:
+        if _live and _pred_price and _pred_price > 0:
+            _delta = (_live - _pred_price) / _pred_price
+            st.metric("Live Price", f"${_live:.2f}", f"{_delta:+.1%} since prediction")
+
+    if _success and _failure and _ref and _ref > 0:
+        # Compute decomposition
+        _spread = _success - _failure
+        _mip = max(0.0, min(1.0, (_ref - _failure) / _spread)) if _spread > 0 else 0.5
+        _fv = _sci_pts * _success + (1 - _sci_pts) * _failure
+        _fv_up = (_fv - _ref) / _ref
+        _up = (_success - _ref) / _ref
+        _down = (_failure - _ref) / _ref
+        _rr = _up / abs(_down) if _down != 0 else 0.0
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Fair Value", f"${_fv:.2f}", f"{_fv_up:+.1%}")
+        m2.metric("Risk/Reward", f"{_rr:.1f}x")
+        m3.metric("Science PTS", f"{_sci_pts:.0%}")
+        m4.metric("Market-Implied Prob", f"{_mip:.0%}", f"{(_sci_pts - _mip):+.0%} gap")
+
+        # Price map
+        _points = [
+            (_failure, "Fail"),
+            (_ref, "Now"),
+            (_fv, "FV"),
+            (_success, "Success"),
+        ]
+        if _pred.get("stop_loss_price"):
+            _points.append((_pred["stop_loss_price"], "Stop"))
+        if _pred.get("entry_price_limit"):
+            _points.append((_pred["entry_price_limit"], "Entry"))
+        _points.sort(key=lambda x: x[0])
+        st.markdown(
+            "  →  ".join(f"**{lbl}** ${px:.2f}" for px, lbl in _points)
+        )
+
+        # Price levels from full execution plan
+        if _plan and _plan.get("price_levels"):
+            st.markdown("##### Price Levels")
+            _lvl_rows = []
+            for lvl in _plan["price_levels"]:
+                _lvl_price = lvl["price"]
+                _dist = (_lvl_price - _ref) / _ref if _ref > 0 else 0
+                _lvl_rows.append({
+                    "Action": lvl["action"],
+                    "Price": f"${_lvl_price:.2f}",
+                    "Distance": f"{_dist:+.1%}",
+                    "Size (% pos)": f"{lvl['size_pct_of_position']:.0f}%",
+                    "Rationale": lvl["rationale"],
+                })
+            st.dataframe(
+                pd.DataFrame(_lvl_rows), width="stretch", hide_index=True
+            )
+
+        # Scenario actions from full execution plan
+        if _plan and _plan.get("scenario_actions"):
+            st.markdown("##### Scenario Playbook")
+            _sc_rows = []
+            for sc in _plan["scenario_actions"]:
+                _sc_rows.append({
+                    "Trigger": sc["trigger"],
+                    "Prob": f"{sc['probability']:.0%}",
+                    "Action": sc["action"],
+                    "Target": f"${sc['target_price']:.2f}",
+                    "Rationale": sc["rationale"],
+                })
+            st.dataframe(
+                pd.DataFrame(_sc_rows), width="stretch", hide_index=True
+            )
+
+        # Risk summary
+        st.markdown("##### Risk & Sizing")
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Approved Size", f"{_pred['approved_size_pct']:.1f}% NAV")
+        r3.metric("Conviction", f"{_pred['net_conviction']}/10")
+
+        if _plan:
+            _stop_type = _plan.get("stop_loss_type", "N/A")
+            r2.metric("Stop Type", _stop_type)
+            _max_loss = _plan.get("max_loss_pct_of_nav")
+            r4.metric(
+                "Max Loss (% NAV)",
+                f"{_max_loss:.2%}" if _max_loss is not None else "N/A",
+            )
+        elif _pred.get("stop_loss_price") and _pred.get("entry_price_limit"):
+            _ml = (
+                _pred["approved_size_pct"]
+                / 100
+                * (_pred["entry_price_limit"] - _pred["stop_loss_price"])
+                / _pred["entry_price_limit"]
+            )
+            r2.metric("Stop Type", "N/A")
+            r4.metric("Max Loss (% NAV)", f"{_ml:.2%}")
+        else:
+            r2.metric("Stop Type", "N/A")
+            r4.metric("Max Loss (% NAV)", "N/A")
+
+        # Time management from full execution plan
+        if _plan:
+            _time_left, _time_right = st.columns(2)
+            with _time_left:
+                _rev = _plan.get("review_date")
+                st.markdown(f"**Review Date:** {_rev or 'N/A'}")
+                st.markdown(
+                    f"**Time Stop:** {_plan.get('time_stop_action', 'N/A')}"
+                )
+            with _time_right:
+                _hedge = _plan.get("hedge_recommendation")
+                if _hedge:
+                    st.markdown(f"**Hedge:** {_hedge}")
+                st.markdown(
+                    f"**Sizing Rationale:** {_plan.get('sizing_rationale', 'N/A')}"
+                )
+    else:
+        st.info(
+            "Binary decomposition not available for this prediction. "
+            "Older runs may not include success/failure prices."
+        )
+
+# -------------------------------------------------------------------
 # Record Outcome — pair predictions with actual catalyst results
 # -------------------------------------------------------------------
 st.divider()
