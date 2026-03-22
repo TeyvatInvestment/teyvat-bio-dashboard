@@ -377,6 +377,51 @@ def record_outcome_from_ui(
 
 
 # ---------------------------------------------------------------------------
+# Auto-cycle observability (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(ttl=300)
+def get_cycle_runs(limit: int = 20) -> list[dict]:
+    """Load recent auto-cycle runs from eval_cycle_runs table."""
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("eval_cycle_runs")
+            .select("*")
+            .order("started_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data
+    except Exception:
+        logger.debug("eval_cycle_runs table not available")
+        return []
+
+
+@st.cache_data(ttl=300)
+def get_detections(
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Load detection records from eval_detections table."""
+    try:
+        client = _get_supabase_client()
+        query = (
+            client.table("eval_detections")
+            .select("*")
+            .order("created_at", desc=True)
+        )
+        if status:
+            query = query.eq("status", status)
+        resp = query.limit(limit).execute()
+        return resp.data
+    except Exception:
+        logger.debug("eval_detections table not available")
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Report requests
 # ---------------------------------------------------------------------------
 

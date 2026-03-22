@@ -1,11 +1,13 @@
-"""Dataset — coverage summary and unpaired items."""
+"""Dataset — coverage summary, unpaired items, and auto-cycle history."""
 
 from __future__ import annotations
+
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from data_loader import get_company_profiles, get_eval_dataset
+from data_loader import get_company_profiles, get_cycle_runs, get_detections, get_eval_dataset
 
 data = get_eval_dataset()
 
@@ -35,6 +37,10 @@ if data["outcomes"]:
     with st.expander(f"Recorded Outcomes ({len(data['outcomes'])})", expanded=False):
         outcome_rows = []
         for o in data["outcomes"]:
+            source = "Auto" if o.get("auto_detected") else "Manual"
+            confidence = o.get("detection_confidence", "")
+            source_label = f"{source} ({confidence})" if confidence else source
+
             outcome_rows.append(
                 {
                     "Ticker": o["ticker"],
@@ -42,9 +48,16 @@ if data["outcomes"]:
                     "Event": o["event_type"],
                     "Date": o["event_date"],
                     "Outcome": o["outcome"],
-                    "Price Before (T-1)": f"${o['price_before']:.2f}" if o.get('price_before') is not None else "N/A",
-                    "Price After (T+1)": f"${o['price_after']:.2f}" if o.get('price_after') is not None else "N/A",
-                    "Return": f"{o['price_change_pct']:+.0%}" if o.get('price_change_pct') is not None else "N/A",
+                    "Source": source_label,
+                    "Price Before (T-1)": f"${o['price_before']:.2f}"
+                    if o.get("price_before") is not None
+                    else "N/A",
+                    "Price After (T+1)": f"${o['price_after']:.2f}"
+                    if o.get("price_after") is not None
+                    else "N/A",
+                    "Return": f"{o['price_change_pct']:+.0%}"
+                    if o.get("price_change_pct") is not None
+                    else "N/A",
                 }
             )
         st.dataframe(
@@ -107,3 +120,111 @@ if preds_with_dates:
     chart_data["Run Date"] = pd.to_datetime(chart_data["Run Date"])
     chart_data["Catalyst Date"] = pd.to_datetime(chart_data["Catalyst Date"])
     st.scatter_chart(chart_data, x="Run Date", y="Catalyst Date", color="Action", size=80)
+
+# -------------------------------------------------------------------
+# Auto-Cycle History (Phase 2)
+# -------------------------------------------------------------------
+st.divider()
+st.subheader("Auto-Cycle History")
+
+cycle_runs = get_cycle_runs(limit=10)
+if cycle_runs:
+    with st.expander(f"Recent Cycle Runs ({len(cycle_runs)})", expanded=True):
+        cycle_rows = []
+        for run in cycle_runs:
+            started = run.get("started_at", "")[:19].replace("T", " ")
+            duration = ""
+            if run.get("completed_at") and run.get("started_at"):
+                try:
+                    t0 = datetime.fromisoformat(run["started_at"])
+                    t1 = datetime.fromisoformat(run["completed_at"])
+                    secs = (t1 - t0).total_seconds()
+                    duration = f"{secs:.0f}s"
+                except (ValueError, TypeError):
+                    pass
+
+            cycle_rows.append(
+                {
+                    "Time": started,
+                    "Status": run.get("status", ""),
+                    "Eligible": run.get("eligible_count", 0),
+                    "Detected": run.get("detected_count", 0),
+                    "Recorded": run.get("auto_recorded_count", 0),
+                    "Flagged": run.get("flagged_count", 0),
+                    "No Signal": run.get("no_signal_count", 0),
+                    "Threshold": run.get("threshold", "HIGH"),
+                    "Dry Run": "Yes" if run.get("dry_run") else "",
+                    "Duration": duration,
+                }
+            )
+        st.dataframe(
+            pd.DataFrame(cycle_rows), width="stretch", hide_index=True
+        )
+
+        # Summary metrics
+        total_runs = len(cycle_runs)
+        total_recorded = sum(r.get("auto_recorded_count", 0) for r in cycle_runs)
+        total_flagged = sum(r.get("flagged_count", 0) for r in cycle_runs)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Runs", total_runs)
+        m2.metric("Total Auto-Recorded", total_recorded)
+        m3.metric("Total Flagged", total_flagged)
+else:
+    st.info(
+        "No auto-cycle runs yet. "
+        "The daily cron job will populate this after the first run."
+    )
+
+# --- Recent Detections ---
+detections = get_detections(limit=30)
+if detections:
+    with st.expander(f"Recent Detections ({len(detections)})", expanded=False):
+        # Filter controls
+        det_statuses = sorted({d.get("status", "") for d in detections})
+        if len(det_statuses) > 1:
+            selected_det_status = st.multiselect(
+                "Detection Status",
+                det_statuses,
+                default=det_statuses,
+                key="det_status_filter",
+            )
+        else:
+            selected_det_status = det_statuses
+
+        det_rows = []
+        for d in detections:
+            if d.get("status") not in selected_det_status:
+                continue
+
+            status = d.get("status", "")
+            status_icon = {
+                "auto_recorded": "Auto",
+                "flagged": "Flagged",
+                "no_signal": "No Signal",
+                "detected": "Detected",
+                "approved": "Approved",
+                "dismissed": "Dismissed",
+            }.get(status, status)
+
+            confidence = d.get("confidence") or ""
+            sources = ", ".join(d.get("sources", []))
+            evidence_list = d.get("evidence", [])
+            evidence = evidence_list[0][:80] if evidence_list else ""
+
+            det_rows.append(
+                {
+                    "Ticker": d.get("ticker", ""),
+                    "Outcome": d.get("outcome") or "-",
+                    "Confidence": confidence,
+                    "Status": status_icon,
+                    "Sources": sources,
+                    "Evidence": evidence,
+                    "Date": (d.get("created_at") or "")[:10],
+                }
+            )
+        if det_rows:
+            st.dataframe(
+                pd.DataFrame(det_rows), width="stretch", hide_index=True
+            )
+        else:
+            st.info("No detections match the selected filters.")

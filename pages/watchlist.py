@@ -60,6 +60,12 @@ else:
     if not filtered:
         st.warning("No entries match the current filters.")
     else:
+        # Build set of auto-detected tickers for badge display
+        _auto_detected_tickers: set[str] = set()
+        for o in data["outcomes"]:
+            if o.get("auto_detected"):
+                _auto_detected_tickers.add(o["ticker"])
+
         STATUS_LABELS = {
             "OVERDUE": "OVERDUE",
             "DUE_SOON": "DUE SOON",
@@ -90,9 +96,16 @@ else:
             if current_price is not None and pred_price is not None and pred_price > 0:
                 price_delta = (current_price - pred_price) / pred_price
 
+            status_label = STATUS_LABELS.get(w["status"], w["status"])
+            if (
+                w["status"] == "RECORDED"
+                and w["ticker"] in _auto_detected_tickers
+            ):
+                status_label = "RECORDED (Auto)"
+
             rows.append(
                 {
-                    "Status": STATUS_LABELS.get(w["status"], w["status"]),
+                    "Status": status_label,
                     "Ticker": w["ticker"],
                     "Company": _company_name(w["ticker"], w.get("company_name", "")),
                     "Action": w["action"],
