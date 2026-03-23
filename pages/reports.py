@@ -64,6 +64,13 @@ else:
         storage_path = report_options[selected_label]
         try:
             content = get_report_content(storage_path)
+            ticker_label = selected_label.split(" \u2014")[0]
+            st.download_button(
+                label="Download Report",
+                data=content,
+                file_name=f"{ticker_label}_report.md",
+                mime="text/markdown",
+            )
             with st.expander("Full Report", expanded=True):
                 st.markdown(content)
         except Exception as exc:
