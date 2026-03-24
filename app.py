@@ -86,13 +86,13 @@ with st.sidebar:
 pg = st.navigation(
     {
         "Dashboard": [
-            st.Page("pages/watchlist.py", title="Watchlist", icon=":material/monitoring:", default=True),
-            st.Page("pages/scorecard.py", title="Scorecard", icon=":material/assessment:"),
-            st.Page("pages/dataset.py", title="Dataset", icon=":material/database:"),
+            st.Page("views/watchlist.py", title="Watchlist", icon=":material/monitoring:", default=True),
+            st.Page("views/scorecard.py", title="Scorecard", icon=":material/assessment:"),
+            st.Page("views/dataset.py", title="Dataset", icon=":material/database:"),
         ],
         "Research": [
-            st.Page("pages/reports.py", title="Reports", icon=":material/description:"),
-            st.Page("pages/request_report.py", title="Request Report", icon=":material/add_circle:"),
+            st.Page("views/reports.py", title="Reports", icon=":material/description:"),
+            st.Page("views/request_report.py", title="Request Report", icon=":material/add_circle:"),
         ],
     }
 )
