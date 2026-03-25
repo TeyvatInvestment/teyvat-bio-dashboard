@@ -22,15 +22,9 @@ def build_watchlist(
     outcome_keys = {(o.ticker, o.event_date) for o in outcomes}
     outcome_tickers = {o.ticker for o in outcomes}
 
-    # Most recent prediction per ticker
-    latest_by_ticker: dict[str, PipelinePrediction] = {}
-    for pred in predictions:
-        existing = latest_by_ticker.get(pred.ticker)
-        if existing is None or pred.run_timestamp > existing.run_timestamp:
-            latest_by_ticker[pred.ticker] = pred
-
     entries: list[WatchlistEntry] = []
-    for ticker, pred in latest_by_ticker.items():
+    for pred in predictions:
+        ticker = pred.ticker
         has_outcome = (
             (ticker, pred.catalyst_date) in outcome_keys
             if pred.catalyst_date
@@ -68,6 +62,7 @@ def build_watchlist(
                 success_price=pred.success_price,
                 failure_price=pred.failure_price,
                 rnpv_per_share=pred.rnpv_per_share,
+                current_price_at_pred=pred.current_price,
             )
         )
 

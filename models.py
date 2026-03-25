@@ -146,3 +146,4 @@ class WatchlistEntry(BaseModel):
     success_price: float | None = None
     failure_price: float | None = None
     rnpv_per_share: float | None = None
+    current_price_at_pred: float | None = None

@@ -78,19 +78,11 @@ else:
         all_tickers = tuple(sorted({w["ticker"] for w in filtered}))
         prices_map = get_current_prices(all_tickers)
 
-        # Build latest prediction per ticker for accurate Price @ Pred
-        _latest_pred: dict[str, dict] = {}
-        for p in data["predictions"]:
-            t = p["ticker"]
-            if t not in _latest_pred or p["run_timestamp"] > _latest_pred[t]["run_timestamp"]:
-                _latest_pred[t] = p
-
         rows = []
         for w in filtered:
             price_info = prices_map.get(w["ticker"])
             current_price = price_info["price"] if price_info else None
-            _matched = _latest_pred.get(w["ticker"])
-            pred_price = _matched["current_price"] if _matched else None
+            pred_price = w.get("current_price_at_pred")
 
             price_delta = None
             if current_price is not None and pred_price is not None and pred_price > 0:
@@ -155,29 +147,25 @@ _buy_predictions = [
     and p["risk_decision"] in ("APPROVED", "RESIZED")
     and p["ticker"] in _filtered_tickers
 ]
-# Keep latest prediction per ticker
-_latest_buy: dict[str, dict] = {}
-for _p in _buy_predictions:
-    _t = _p["ticker"]
-    if _t not in _latest_buy or _p["run_timestamp"] > _latest_buy[_t]["run_timestamp"]:
-        _latest_buy[_t] = _p
+# Sort by run_timestamp descending (most recent first)
+_buy_predictions.sort(key=lambda p: p["run_timestamp"], reverse=True)
 
-if _latest_buy:
+if _buy_predictions:
     st.divider()
     st.subheader("Execution Detail")
 
-    _buy_tickers = sorted(_latest_buy.keys())
-    _ticker_labels = {
-        f"{t} — {_company_name(t, _latest_buy[t].get('company_name', ''))}": t
-        for t in _buy_tickers
-    }
+    _buy_labels: dict[str, dict] = {}
+    for _p in _buy_predictions:
+        _run_dt = _p["run_timestamp"][:10] if isinstance(_p["run_timestamp"], str) else str(_p["run_timestamp"])[:10]
+        _label = f"{_p['ticker']} — {_company_name(_p['ticker'], _p.get('company_name', ''))} ({_run_dt})"
+        _buy_labels[_label] = _p
     _selected_label = st.selectbox(
-        "Select position", list(_ticker_labels.keys()), key="exec_ticker"
+        "Select position", list(_buy_labels.keys()), key="exec_ticker"
     )
-    _sel_ticker = _ticker_labels[_selected_label]
-    _pred = _latest_buy[_sel_ticker]
+    _pred = _buy_labels[_selected_label]
 
     # Live price
+    _sel_ticker = _pred["ticker"]
     _exec_prices = get_current_prices((_sel_ticker,))
     _price_info = _exec_prices.get(_sel_ticker)
     _live = _price_info["price"] if _price_info else None
