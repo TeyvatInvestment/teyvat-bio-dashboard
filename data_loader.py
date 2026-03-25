@@ -442,6 +442,208 @@ def get_report_requests() -> list[dict]:
     return resp.data
 
 
+# ---------------------------------------------------------------------------
+# Portfolio data (reads from portfolio_state, portfolio_trades, portfolio_snapshots)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(ttl=60)
+def get_portfolio_list() -> list[dict]:
+    """List all portfolios with computed summary stats.
+
+    Reads ``portfolio_state`` table and computes NAV from ``cash + positions``
+    since NAV is a derived property (not stored as a column).
+    """
+    try:
+        client = _get_supabase_client()
+        resp = client.table("portfolio_state").select("*").order("portfolio_id").execute()
+    except Exception:
+        logger.debug("portfolio_state table not available")
+        return []
+
+    results = []
+    for row in resp.data or []:
+        positions = row.get("positions", {})
+        if not isinstance(positions, dict):
+            positions = {}
+        positions_value = sum(
+            float(p.get("market_value", 0)) for p in positions.values()
+        )
+        cash = float(row.get("cash", 0))
+        initial_nav = float(row.get("initial_nav", 0))
+        nav = cash + positions_value
+        ret = (nav - initial_nav) / initial_nav if initial_nav > 0 else 0.0
+
+        results.append({
+            "portfolio_id": row["portfolio_id"],
+            "portfolio_label": row.get("portfolio_label", ""),
+            "nav": nav,
+            "cash": cash,
+            "initial_nav": initial_nav,
+            "positions_value": positions_value,
+            "num_positions": len(positions),
+            "return_pct": ret,
+            "high_water_mark": float(row.get("high_water_mark", 0)),
+            "total_realized_pnl": float(row.get("total_realized_pnl", 0)),
+            "total_transaction_costs": float(row.get("total_transaction_costs", 0)),
+        })
+    return results
+
+
+@st.cache_data(ttl=60)
+def get_portfolio_state(portfolio_id: str) -> dict | None:
+    """Load full portfolio state including flattened positions list.
+
+    Positions are stored as JSONB ``{ticker: {fields...}}`` in Supabase.
+    This function flattens them into a list for easy DataFrame rendering.
+    """
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("portfolio_state")
+            .select("*")
+            .eq("portfolio_id", portfolio_id)
+            .execute()
+        )
+    except Exception:
+        logger.debug("portfolio_state table not available")
+        return None
+
+    if not resp.data:
+        return None
+
+    row = resp.data[0]
+    positions = row.get("positions", {})
+    if not isinstance(positions, dict):
+        positions = {}
+
+    # Flatten JSONB positions into a list of dicts
+    positions_list = []
+    for ticker, pos in sorted(positions.items()):
+        if not isinstance(pos, dict):
+            continue
+        positions_list.append({
+            "ticker": ticker,
+            "shares": float(pos.get("shares", 0)),
+            "avg_cost": float(pos.get("avg_cost", 0)),
+            "current_price": float(pos.get("current_price", 0)),
+            "market_value": float(pos.get("market_value", 0)),
+            "unrealized_pnl": float(pos.get("unrealized_pnl", 0)),
+            "unrealized_pnl_pct": float(pos.get("unrealized_pnl_pct", 0)),
+            "weight_pct": float(pos.get("weight_pct", 0)),
+            "moa": pos.get("moa", ""),
+            "catalyst_date": pos.get("catalyst_date"),
+            "stop_loss_price": float(pos.get("stop_loss_price", 0)),
+            "stop_loss_type": pos.get("stop_loss_type", "HARD"),
+            "entry_date": pos.get("entry_date"),
+            "entry_reason": pos.get("entry_reason", ""),
+            "review_date": pos.get("review_date"),
+            "pending_orders": pos.get("pending_orders", []),
+            "take_profit_levels": pos.get("take_profit_levels", []),
+            "entry_spread_bps": float(pos.get("entry_spread_bps", 30)),
+            "entry_impact_bps": float(pos.get("entry_impact_bps", 10)),
+        })
+
+    cash = float(row.get("cash", 0))
+    positions_value = sum(p["market_value"] for p in positions_list)
+    nav = cash + positions_value
+    initial_nav = float(row.get("initial_nav", 0))
+    hwm = float(row.get("high_water_mark", nav))
+
+    # MoA exposure breakdown
+    moa_exposure: dict[str, float] = {}
+    for p in positions_list:
+        moa = p["moa"] or "Unknown"
+        moa_exposure[moa] = moa_exposure.get(moa, 0) + (
+            p["market_value"] / nav * 100 if nav > 0 else 0
+        )
+
+    return {
+        "portfolio_id": row["portfolio_id"],
+        "portfolio_label": row.get("portfolio_label", ""),
+        "inception_date": row.get("inception_date"),
+        "initial_nav": initial_nav,
+        "nav": nav,
+        "cash": cash,
+        "positions_value": positions_value,
+        "num_positions": len(positions_list),
+        "high_water_mark": hwm,
+        "total_realized_pnl": float(row.get("total_realized_pnl", 0)),
+        "total_transaction_costs": float(row.get("total_transaction_costs", 0)),
+        "return_pct": (nav - initial_nav) / initial_nav if initial_nav > 0 else 0.0,
+        "drawdown_pct": (nav - hwm) / hwm if hwm > 0 else 0.0,
+        "positions": positions_list,
+        "moa_exposure": moa_exposure,
+    }
+
+
+@st.cache_data(ttl=60)
+def get_portfolio_trades(portfolio_id: str, limit: int = 100) -> list[dict]:
+    """Load trade history for a portfolio, most recent first."""
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("portfolio_trades")
+            .select("*")
+            .eq("portfolio_id", portfolio_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data or []
+    except Exception:
+        logger.debug("portfolio_trades table not available")
+        return []
+
+
+@st.cache_data(ttl=300)
+def get_portfolio_snapshots(portfolio_id: str) -> list[dict]:
+    """Load daily NAV snapshots for a single portfolio (chronological)."""
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("portfolio_snapshots")
+            .select("*")
+            .eq("portfolio_id", portfolio_id)
+            .order("snapshot_date", desc=False)
+            .execute()
+        )
+        return resp.data or []
+    except Exception:
+        logger.debug("portfolio_snapshots table not available")
+        return []
+
+
+@st.cache_data(ttl=300)
+def get_all_portfolio_snapshots() -> dict[str, list[dict]]:
+    """Load snapshots for ALL portfolios (for multi-portfolio NAV overlay).
+
+    Returns ``{portfolio_id: [snapshot_dicts...]}`` grouped by portfolio.
+    """
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("portfolio_snapshots")
+            .select("*")
+            .order("snapshot_date", desc=False)
+            .execute()
+        )
+    except Exception:
+        logger.debug("portfolio_snapshots table not available")
+        return {}
+
+    result: dict[str, list[dict]] = {}
+    for row in resp.data or []:
+        pid = row.get("portfolio_id", "default")
+        result.setdefault(pid, []).append(row)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Report requests
+# ---------------------------------------------------------------------------
+
+
 def submit_report_request(
     ticker: str,
     requested_by: str,
