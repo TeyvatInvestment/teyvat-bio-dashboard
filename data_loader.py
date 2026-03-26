@@ -422,6 +422,27 @@ def get_detections(
 
 
 # ---------------------------------------------------------------------------
+# Detection review actions
+# ---------------------------------------------------------------------------
+
+
+def approve_detection(detection_id: int) -> None:
+    """Mark a detection as approved (status → 'approved')."""
+    client = _get_supabase_client()
+    client.table("eval_detections").update(
+        {"status": "approved"}
+    ).eq("id", detection_id).execute()
+
+
+def dismiss_detection(detection_id: int) -> None:
+    """Mark a detection as dismissed (status → 'dismissed')."""
+    client = _get_supabase_client()
+    client.table("eval_detections").update(
+        {"status": "dismissed"}
+    ).eq("id", detection_id).execute()
+
+
+# ---------------------------------------------------------------------------
 # Report requests
 # ---------------------------------------------------------------------------
 

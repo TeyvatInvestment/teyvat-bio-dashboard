@@ -107,6 +107,7 @@ pg = st.navigation(
             st.Page("views/watchlist.py", title="Watchlist", icon=":material/monitoring:", default=True),
             st.Page("views/scorecard.py", title="Scorecard", icon=":material/assessment:"),
             st.Page("views/dataset.py", title="Dataset", icon=":material/database:"),
+            st.Page("views/review_queue.py", title="Review Queue", icon=":material/rate_review:"),
         ],
         "Portfolio": [
             st.Page("views/portfolio.py", title="Portfolio", icon=":material/account_balance:"),
