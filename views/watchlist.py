@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from data_loader import (
+    approve_detection,
+    dismiss_detection,
     get_company_profiles,
     get_current_prices,
     get_detections,
@@ -394,7 +396,15 @@ if _flagged:
                         "Price After (0=auto)", min_value=0.0, value=0.0,
                         step=0.01, format="%.2f", key=f"pa_{_fk}",
                     )
-                    if st.form_submit_button("Confirm & Record", type="primary"):
+                    _btn_col1, _btn_col2 = st.columns(2)
+                    with _btn_col1:
+                        _do_confirm = st.form_submit_button(
+                            "Confirm & Record", type="primary",
+                        )
+                    with _btn_col2:
+                        _do_dismiss = st.form_submit_button("Dismiss")
+
+                    if _do_confirm:
                         with st.spinner("Recording..."):
                             try:
                                 _rq_result = record_outcome_from_ui(
@@ -414,6 +424,7 @@ if _flagged:
                                         _rq_pa if _rq_pa > 0 else None
                                     ),
                                 )
+                                approve_detection(_det["id"])
                                 _rq_od = _rq_result["outcome"]
                                 _rq_pct = _rq_od["price_change_pct"]
                                 st.session_state["_review_record_success"] = (
@@ -430,6 +441,11 @@ if _flagged:
                                 st.rerun()
                             except Exception as _rq_err:
                                 st.error(f"Failed: {_rq_err}")
+
+                    if _do_dismiss:
+                        dismiss_detection(_det["id"])
+                        get_detections.clear()
+                        st.rerun()
 
 # -------------------------------------------------------------------
 # Record Outcome — pair predictions with actual catalyst results
