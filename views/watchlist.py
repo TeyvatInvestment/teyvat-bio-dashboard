@@ -10,6 +10,7 @@ import streamlit as st
 from data_loader import (
     get_company_profiles,
     get_current_prices,
+    get_detections,
     get_eval_dataset,
     record_outcome_from_ui,
 )
@@ -299,6 +300,136 @@ if _buy_predictions:
             "Binary decomposition not available for this prediction. "
             "Older runs may not include success/failure prices."
         )
+
+# -------------------------------------------------------------------
+# Review Queue — flagged detections from auto-cycle
+# -------------------------------------------------------------------
+_flagged = get_detections(status="flagged")
+if _flagged:
+    st.divider()
+    st.subheader(f"Review Queue ({len(_flagged)})")
+    st.caption(
+        "The auto-cycle detected these outcomes but couldn't confirm with "
+        "HIGH confidence. Review the evidence and confirm or dismiss."
+    )
+
+    # Show success from previous confirmation
+    if st.session_state.get("_review_record_success"):
+        st.success(st.session_state.pop("_review_record_success"))
+        for _rw in st.session_state.pop("_review_record_warnings", []):
+            st.warning(_rw)
+
+    _outcome_colors = {
+        "APPROVED": "green", "CRL": "red", "FAILED": "red",
+        "MET_ENDPOINT": "green", "DELAYED": "orange",
+    }
+    _outcomes_list = ["APPROVED", "CRL", "MET_ENDPOINT", "FAILED", "DELAYED"]
+    _event_types_list = ["PDUFA", "Phase3_Readout", "AdCom", "NDA", "EarningsReadout"]
+
+    for _det in _flagged:
+        _d_ticker = _det.get("ticker", "?")
+        _d_outcome = _det.get("outcome", "?")
+        _d_confidence = _det.get("confidence", "?")
+        _d_event_type = _det.get("event_type", "PDUFA")
+        _d_catalyst_date = _det.get("catalyst_date")
+        _d_company = _det.get("company_name", "")
+        _d_sources = _det.get("sources", [])
+        _d_evidence = _det.get("evidence", [])
+        _d_created = _det.get("created_at", "")
+        _d_color = _outcome_colors.get(_d_outcome, "gray")
+
+        with st.expander(
+            f":{_d_color}[{_d_outcome}] **{_d_ticker}** — "
+            f"{_d_company or _d_ticker} "
+            f"({_d_event_type}, {_d_confidence} confidence)",
+            expanded=True,
+        ):
+            _d_col_info, _d_col_action = st.columns([3, 2])
+
+            with _d_col_info:
+                st.markdown(f"**Catalyst Date:** {_d_catalyst_date or 'N/A'}")
+                st.markdown(
+                    f"**Sources:** "
+                    f"{', '.join(_d_sources) if _d_sources else 'N/A'}"
+                )
+                if _d_evidence:
+                    st.markdown("**Evidence:**")
+                    for _ev in _d_evidence[:5]:
+                        st.markdown(f"- {_ev}")
+                st.caption(
+                    f"Detected: {_d_created[:19] if _d_created else 'N/A'}"
+                )
+
+            with _d_col_action:
+                _fk = f"rq_{_d_ticker}_{_det.get('id', _d_created)}"
+                with st.form(_fk):
+                    _d_def_out = (
+                        _outcomes_list.index(_d_outcome)
+                        if _d_outcome in _outcomes_list else 0
+                    )
+                    _rq_outcome = st.selectbox(
+                        "Outcome", _outcomes_list, index=_d_def_out,
+                        key=f"o_{_fk}",
+                    )
+                    _d_def_et = (
+                        _event_types_list.index(_d_event_type)
+                        if _d_event_type in _event_types_list else 0
+                    )
+                    _rq_etype = st.selectbox(
+                        "Event Type", _event_types_list, index=_d_def_et,
+                        key=f"et_{_fk}",
+                    )
+                    try:
+                        _rq_def_date = date.fromisoformat(str(_d_catalyst_date))
+                    except (ValueError, TypeError):
+                        _rq_def_date = date.today()
+                    _rq_date = st.date_input(
+                        "Event Date", value=_rq_def_date, key=f"d_{_fk}",
+                    )
+                    _rq_pb = st.number_input(
+                        "Price Before (0=auto)", min_value=0.0, value=0.0,
+                        step=0.01, format="%.2f", key=f"pb_{_fk}",
+                    )
+                    _rq_pa = st.number_input(
+                        "Price After (0=auto)", min_value=0.0, value=0.0,
+                        step=0.01, format="%.2f", key=f"pa_{_fk}",
+                    )
+                    if st.form_submit_button("Confirm & Record", type="primary"):
+                        with st.spinner("Recording..."):
+                            try:
+                                _rq_result = record_outcome_from_ui(
+                                    ticker=_d_ticker,
+                                    event_type=_rq_etype,
+                                    event_date=_rq_date,
+                                    outcome=_rq_outcome,
+                                    company_name=_d_company or None,
+                                    notes=(
+                                        f"Confirmed from review queue "
+                                        f"(auto-detected {_d_confidence})"
+                                    ),
+                                    price_before_override=(
+                                        _rq_pb if _rq_pb > 0 else None
+                                    ),
+                                    price_after_override=(
+                                        _rq_pa if _rq_pa > 0 else None
+                                    ),
+                                )
+                                _rq_od = _rq_result["outcome"]
+                                _rq_pct = _rq_od["price_change_pct"]
+                                st.session_state["_review_record_success"] = (
+                                    f"Recorded: {_d_ticker} {_rq_etype} on "
+                                    f"{_rq_date} \u2192 {_rq_outcome} "
+                                    f"(return: {_rq_pct:+.1%})"
+                                )
+                                st.session_state["_review_record_warnings"] = (
+                                    _rq_result["warnings"]
+                                )
+                                get_eval_dataset.clear()
+                                get_detections.clear()
+                                st.session_state["last_refreshed"] = datetime.now()
+                                st.rerun()
+                            except Exception as _rq_err:
+                                st.error(f"Failed: {_rq_err}")
 
 # -------------------------------------------------------------------
 # Record Outcome — pair predictions with actual catalyst results

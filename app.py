@@ -22,6 +22,7 @@ import streamlit_authenticator as stauth
 from data_loader import (
     get_all_portfolio_snapshots,
     get_current_prices,
+    get_detections,
     get_eval_dataset,
     get_portfolio_list,
     get_portfolio_snapshots,
@@ -87,6 +88,7 @@ with st.sidebar:
         get_current_prices.clear()
         get_reports.clear()
         get_report_requests.clear()
+        get_detections.clear()
         get_portfolio_list.clear()
         get_portfolio_state.clear()
         get_portfolio_trades.clear()
