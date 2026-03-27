@@ -306,7 +306,16 @@ if _buy_predictions:
 # -------------------------------------------------------------------
 # Review Queue — flagged detections from auto-cycle
 # -------------------------------------------------------------------
-_flagged = get_detections(status="flagged")
+_flagged_raw = get_detections(status="flagged")
+# Deduplicate by (ticker, event_type, catalyst_date) — keep most recent
+_seen_keys: set[tuple[str, str, str]] = set()
+_flagged: list[dict] = []
+for _det in sorted(_flagged_raw, key=lambda d: d.get("created_at", ""), reverse=True):
+    _key = (_det.get("ticker", ""), _det.get("event_type", ""), _det.get("catalyst_date", ""))
+    if _key not in _seen_keys:
+        _seen_keys.add(_key)
+        _flagged.append(_det)
+
 if _flagged:
     st.divider()
     st.subheader(f"Review Queue ({len(_flagged)})")
