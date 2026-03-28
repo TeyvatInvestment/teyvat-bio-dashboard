@@ -220,6 +220,8 @@ if detections:
                     "Sources": sources,
                     "Evidence": evidence,
                     "Date": (d.get("created_at") or "")[:10],
+                    "Reviewed By": d.get("reviewed_by") or "",
+                    "Reviewed At": (d.get("reviewed_at") or "")[:10],
                 }
             )
         if det_rows:

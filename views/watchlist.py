@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from data_loader import (
-    approve_detection,
+    confirm_detection,
     dismiss_detection,
     get_company_profiles,
     get_current_prices,
@@ -367,6 +367,41 @@ if _flagged:
                     st.markdown("**Evidence:**")
                     for _ev in _d_evidence[:5]:
                         st.markdown(f"- {_ev}")
+
+                # Pre-populated prices from auto-cycle
+                _d_price_before = _det.get("price_before")
+                _d_price_event = _det.get("price_event_day")
+                _d_price_after = _det.get("price_after")
+                _d_price_7d = _det.get("price_7d_after")
+                _d_price_14d = _det.get("price_14d_after")
+                _d_price_30d = _det.get("price_30d_after")
+                _d_price_chg = _det.get("price_change_pct")
+
+                if _d_price_before is not None:
+                    st.markdown("**Prices (auto-fetched):**")
+                    _price_parts = [f"T-1: ${_d_price_before:.2f}"]
+                    if _d_price_event is not None:
+                        _price_parts.append(f"T=0: ${_d_price_event:.2f}")
+                    if _d_price_after is not None:
+                        _price_parts.append(f"T+1: ${_d_price_after:.2f}")
+                    if _d_price_7d is not None:
+                        _price_parts.append(f"T+7: ${_d_price_7d:.2f}")
+                    if _d_price_14d is not None:
+                        _price_parts.append(f"T+14: ${_d_price_14d:.2f}")
+                    if _d_price_30d is not None:
+                        _price_parts.append(f"T+30: ${_d_price_30d:.2f}")
+                    st.markdown(" · ".join(_price_parts))
+                    if _d_price_chg is not None:
+                        _chg_color = "green" if _d_price_chg >= 0 else "red"
+                        st.markdown(
+                            f"**Return:** :{_chg_color}[{_d_price_chg:+.1%}]"
+                        )
+                    # Show price warnings if any
+                    _d_price_warns = _det.get("price_warnings")
+                    if _d_price_warns:
+                        for _pw in _d_price_warns:
+                            st.caption(f"⚠ {_pw}")
+
                 st.caption(
                     f"Detected: {_d_created[:19] if _d_created else 'N/A'}"
                 )
@@ -398,11 +433,13 @@ if _flagged:
                         "Event Date", value=_rq_def_date, key=f"d_{_fk}",
                     )
                     _rq_pb = st.number_input(
-                        "Price Before (0=auto)", min_value=0.0, value=0.0,
+                        "Price Before (T-1)", min_value=0.0,
+                        value=float(_d_price_before) if _d_price_before else 0.0,
                         step=0.01, format="%.2f", key=f"pb_{_fk}",
                     )
                     _rq_pa = st.number_input(
-                        "Price After (0=auto)", min_value=0.0, value=0.0,
+                        "Price After (T+1)", min_value=0.0,
+                        value=float(_d_price_after) if _d_price_after else 0.0,
                         step=0.01, format="%.2f", key=f"pa_{_fk}",
                     )
                     _btn_col1, _btn_col2 = st.columns(2)
@@ -414,8 +451,22 @@ if _flagged:
                         _do_dismiss = st.form_submit_button("Dismiss")
 
                     if _do_confirm:
+                        _reviewer = st.session_state.get("name", "unknown")
                         with st.spinner("Recording..."):
                             try:
+                                # Build overrides dict if user changed anything
+                                _overrides = {}
+                                if _rq_outcome != _d_outcome:
+                                    _overrides["outcome"] = _rq_outcome
+                                if _rq_etype != _d_event_type:
+                                    _overrides["event_type"] = _rq_etype
+                                if _rq_date.isoformat() != str(_d_catalyst_date):
+                                    _overrides["catalyst_date"] = _rq_date.isoformat()
+                                if _rq_pb > 0 and _rq_pb != (_d_price_before or 0):
+                                    _overrides["price_before"] = _rq_pb
+                                if _rq_pa > 0 and _rq_pa != (_d_price_after or 0):
+                                    _overrides["price_after"] = _rq_pa
+
                                 _rq_result = record_outcome_from_ui(
                                     ticker=_d_ticker,
                                     event_type=_rq_etype,
@@ -423,7 +474,7 @@ if _flagged:
                                     outcome=_rq_outcome,
                                     company_name=_d_company or None,
                                     notes=(
-                                        f"Confirmed from review queue "
+                                        f"Confirmed by {_reviewer} "
                                         f"(auto-detected {_d_confidence})"
                                     ),
                                     price_before_override=(
@@ -432,13 +483,21 @@ if _flagged:
                                     price_after_override=(
                                         _rq_pa if _rq_pa > 0 else None
                                     ),
+                                    price_event_day=_d_price_event,
+                                    price_7d_after=_d_price_7d,
+                                    price_14d_after=_d_price_14d,
+                                    price_30d_after=_d_price_30d,
                                 )
-                                approve_detection(_det["id"])
+                                confirm_detection(
+                                    _det["id"],
+                                    reviewed_by=_reviewer,
+                                    overrides=_overrides if _overrides else None,
+                                )
                                 _rq_od = _rq_result["outcome"]
                                 _rq_pct = _rq_od["price_change_pct"]
                                 st.session_state["_review_record_success"] = (
                                     f"Recorded: {_d_ticker} {_rq_etype} on "
-                                    f"{_rq_date} \u2192 {_rq_outcome} "
+                                    f"{_rq_date} → {_rq_outcome} "
                                     f"(return: {_rq_pct:+.1%})"
                                 )
                                 st.session_state["_review_record_warnings"] = (
@@ -452,9 +511,39 @@ if _flagged:
                                 st.error(f"Failed: {_rq_err}")
 
                     if _do_dismiss:
-                        dismiss_detection(_det["id"])
+                        _reviewer = st.session_state.get("name", "unknown")
+                        dismiss_detection(_det["id"], reviewed_by=_reviewer)
                         get_detections.clear()
                         st.rerun()
+
+            # Audit trail
+            _d_audit = _det.get("audit_log") or []
+            if _d_audit:
+                st.markdown("---")
+                st.caption("**Audit Trail**")
+                for _a in _d_audit:
+                    _a_action = _a.get("action", "?")
+                    _a_by = _a.get("by", "system")
+                    _a_at = _a.get("at", "")[:19].replace("T", " ")
+                    _a_icon = {
+                        "detected": "🔍",
+                        "confirmed": "✅",
+                        "dismissed": "❌",
+                        "modified": "✏️",
+                    }.get(_a_action, "•")
+                    _a_line = f"{_a_icon} **{_a_action}** by {_a_by} at {_a_at}"
+                    _a_changes = _a.get("changes") or _a.get("overrides")
+                    if _a_changes:
+                        _change_parts = []
+                        for _ck, _cv in _a_changes.items():
+                            if isinstance(_cv, dict):
+                                _change_parts.append(
+                                    f"{_ck}: {_cv.get('old')} → {_cv.get('new')}"
+                                )
+                            else:
+                                _change_parts.append(f"{_ck}: {_cv}")
+                        _a_line += f" ({', '.join(_change_parts)})"
+                    st.caption(_a_line)
 
 # -------------------------------------------------------------------
 # Record Outcome — pair predictions with actual catalyst results

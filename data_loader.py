@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import streamlit as st
@@ -267,6 +267,10 @@ def record_outcome_from_ui(
     notes: str | None = None,
     price_before_override: float | None = None,
     price_after_override: float | None = None,
+    price_event_day: float | None = None,
+    price_7d_after: float | None = None,
+    price_14d_after: float | None = None,
+    price_30d_after: float | None = None,
 ) -> dict:
     """Record a catalyst outcome to Supabase with auto-fetched FMP prices.
 
@@ -369,6 +373,14 @@ def record_outcome_from_ui(
     }
     if notes:
         row["notes"] = notes
+    if price_event_day is not None:
+        row["price_event_day"] = round(price_event_day, 2)
+    if price_7d_after is not None:
+        row["price_7d_after"] = round(price_7d_after, 2)
+    if price_14d_after is not None:
+        row["price_14d_after"] = round(price_14d_after, 2)
+    if price_30d_after is not None:
+        row["price_30d_after"] = round(price_30d_after, 2)
 
     client.table("eval_outcomes").insert(row).execute()
     logger.info("Outcome recorded: %s %s %s → %s", ticker, event_type, event_date, outcome)
@@ -426,20 +438,75 @@ def get_detections(
 # ---------------------------------------------------------------------------
 
 
-def approve_detection(detection_id: int) -> None:
-    """Mark a detection as approved (status → 'approved')."""
+def confirm_detection(
+    detection_id: int,
+    reviewed_by: str,
+    overrides: dict | None = None,
+) -> None:
+    """Confirm a detection with audit trail.
+
+    Updates status to 'confirmed', records reviewer and timestamp,
+    appends to audit_log, and optionally applies field overrides.
+    """
     client = _get_supabase_client()
-    client.table("eval_detections").update(
-        {"status": "approved"}
-    ).eq("id", detection_id).execute()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Get current audit_log
+    current = (
+        client.table("eval_detections")
+        .select("audit_log")
+        .eq("id", detection_id)
+        .single()
+        .execute()
+    )
+    existing_log = current.data.get("audit_log") or []
+
+    audit_entry: dict = {
+        "action": "confirmed",
+        "by": reviewed_by,
+        "at": now,
+    }
+    if overrides:
+        audit_entry["overrides"] = overrides
+    existing_log.append(audit_entry)
+
+    updates: dict = {
+        "status": "confirmed",
+        "reviewed_by": reviewed_by,
+        "reviewed_at": now,
+        "audit_log": existing_log,
+    }
+    if overrides:
+        updates.update(overrides)
+
+    client.table("eval_detections").update(updates).eq("id", detection_id).execute()
 
 
-def dismiss_detection(detection_id: int) -> None:
-    """Mark a detection as dismissed (status → 'dismissed')."""
+def dismiss_detection(detection_id: int, reviewed_by: str) -> None:
+    """Mark a detection as dismissed with audit trail."""
     client = _get_supabase_client()
-    client.table("eval_detections").update(
-        {"status": "dismissed"}
-    ).eq("id", detection_id).execute()
+    now = datetime.now(timezone.utc).isoformat()
+
+    current = (
+        client.table("eval_detections")
+        .select("audit_log")
+        .eq("id", detection_id)
+        .single()
+        .execute()
+    )
+    existing_log = current.data.get("audit_log") or []
+    existing_log.append({
+        "action": "dismissed",
+        "by": reviewed_by,
+        "at": now,
+    })
+
+    client.table("eval_detections").update({
+        "status": "dismissed",
+        "reviewed_by": reviewed_by,
+        "reviewed_at": now,
+        "audit_log": existing_log,
+    }).eq("id", detection_id).execute()
 
 
 # ---------------------------------------------------------------------------
