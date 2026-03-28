@@ -526,18 +526,19 @@ else:
                     })
 
         if chart_rows:
+            import altair as alt
+
             chart_df = pd.DataFrame(chart_rows)
 
-            # Pivot for multi-line chart: columns = outcomes, index = time points
-            pivot = chart_df.pivot_table(
-                index="Time", columns="Outcome", values="Change %", aggfunc="first"
+            # Determine which time points are actually present, in correct order
+            time_order = [t for t in time_points if t in chart_df["Time"].values]
+
+            chart = alt.Chart(chart_df).mark_line(point=True).encode(
+                x=alt.X("Time:N", sort=time_order, title=""),
+                y=alt.Y("Change %:Q", title="Price Change (%)"),
+                color=alt.Color("Outcome:N", title=""),
             )
-
-            # Reorder time points correctly
-            time_order = [t for t in time_points if t in pivot.index]
-            pivot = pivot.reindex(time_order)
-
-            st.line_chart(pivot)
+            st.altair_chart(chart, use_container_width=True)
 
             # Summary table
             with st.expander("Outcome Details", expanded=False):
