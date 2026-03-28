@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from models import CatalystOutcome, PipelinePrediction, WatchlistEntry
+from models import CatalystOutcome, PipelinePrediction, WatchlistEntry, experiments_match
 
 
 def build_watchlist(
@@ -19,16 +19,12 @@ def build_watchlist(
     if today is None:
         today = date.today()
 
-    outcome_keys = {(o.ticker, o.event_date) for o in outcomes}
-    outcome_tickers = {o.ticker for o in outcomes}
-
     entries: list[WatchlistEntry] = []
     for pred in predictions:
         ticker = pred.ticker
-        has_outcome = (
-            (ticker, pred.catalyst_date) in outcome_keys
-            if pred.catalyst_date
-            else ticker in outcome_tickers
+        has_outcome = any(
+            experiments_match(pred.ticker, pred.catalyst_type, o.ticker, o.event_type)
+            for o in outcomes
         )
 
         if has_outcome:
@@ -52,6 +48,7 @@ def build_watchlist(
                 company_name=pred.company_name,
                 action=pred.action,
                 catalyst_date=pred.catalyst_date,
+                catalyst_type=pred.catalyst_type,
                 pts_gap=pred.pts_gap,
                 net_conviction=pred.net_conviction,
                 science_pts=pred.science_pts,

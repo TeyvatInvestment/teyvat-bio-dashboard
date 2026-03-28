@@ -15,11 +15,18 @@ st.title("Scorecard")
 
 if n_paired == 0:
     st.info(
-        "No paired events yet. Record outcomes using the form on the "
-        "Watchlist page, or via the CLI (`bioresearch eval record`)."
+        "No paired events yet. Record outcomes on the Experiments page "
+        "or via the CLI (`bioresearch eval record`)."
     )
 else:
     st.subheader(f"Core Metrics ({n_paired} paired events)")
+
+    if n_paired < 5:
+        st.warning(
+            f"Only **{n_paired}** paired event(s) — metrics below are illustrative, "
+            "not statistically significant. Need 5+ for meaningful hit rate, "
+            "10+ for correlation metrics."
+        )
 
     row1 = st.columns(3)
     row2 = st.columns(3)

@@ -22,6 +22,9 @@ class CatalystOutcome(BaseModel):
     price_before: float
     price_after: float
     price_change_pct: float
+    price_event_day: float | None = None
+    price_7d_after: float | None = None
+    price_14d_after: float | None = None
     price_30d_after: float | None = None
     notes: str | None = None
 
@@ -41,6 +44,7 @@ class PipelinePrediction(BaseModel):
     evidence_quality: int = Field(ge=1, le=10)
     next_catalyst: str = ""
     catalyst_date: date | None = None
+    catalyst_type: str | None = None  # "PDUFA" | "Phase3_Readout" | "AdCom" | etc.
 
     # Fin Analyst
     market_pts: float = Field(ge=0.0, le=1.0)
@@ -76,6 +80,25 @@ class PipelinePrediction(BaseModel):
     trace_path: str | None = None
 
 
+def experiments_match(
+    pred_ticker: str,
+    pred_catalyst_type: str | None,
+    outcome_ticker: str,
+    outcome_event_type: str,
+) -> bool:
+    """Check if a prediction matches an outcome by experiment identity.
+
+    Tier 1: (ticker, catalyst_type) match when prediction has catalyst_type.
+    Tier 2: ticker only when prediction's catalyst_type is None (legacy data).
+    No match when both have catalyst_type but they differ.
+    """
+    if pred_ticker != outcome_ticker:
+        return False
+    if pred_catalyst_type is not None:
+        return pred_catalyst_type == outcome_event_type
+    return True
+
+
 class EvalDataset(BaseModel):
     """Collection of outcomes and their paired predictions for scoring."""
 
@@ -83,50 +106,42 @@ class EvalDataset(BaseModel):
     predictions: list[PipelinePrediction] = []
 
     def paired(self) -> list[tuple[CatalystOutcome, list[PipelinePrediction]]]:
-        """Return outcomes paired with their matching predictions."""
-        pred_by_key: dict[tuple[str, date | None], list[PipelinePrediction]] = {}
-        for p in self.predictions:
-            key = (p.ticker, p.catalyst_date)
-            pred_by_key.setdefault(key, []).append(p)
+        """Return outcomes paired with their matching predictions.
 
+        Uses 2-tier experiment identity matching via experiments_match().
+        Predictions are shared across outcomes within the same tier.
+        """
         pairs = []
         for outcome in self.outcomes:
-            preds = pred_by_key.get((outcome.ticker, outcome.event_date), [])
-            if not preds:
-                preds = pred_by_key.get((outcome.ticker, None), [])
-            if preds:
-                pairs.append((outcome, preds))
+            matched = [
+                p for p in self.predictions
+                if experiments_match(
+                    p.ticker, p.catalyst_type, outcome.ticker, outcome.event_type
+                )
+            ]
+            if matched:
+                pairs.append((outcome, matched))
         return pairs
 
     @property
     def unpaired_outcomes(self) -> list[CatalystOutcome]:
-        pred_keys: set[tuple[str, date | None]] = {
-            (p.ticker, p.catalyst_date) for p in self.predictions
-        }
-        pred_tickers_no_date = {k[0] for k in pred_keys if k[1] is None}
-        unpaired = []
-        for o in self.outcomes:
-            if (o.ticker, o.event_date) in pred_keys:
-                continue
-            if o.ticker in pred_tickers_no_date:
-                continue
-            unpaired.append(o)
-        return unpaired
+        return [
+            o for o in self.outcomes
+            if not any(
+                experiments_match(p.ticker, p.catalyst_type, o.ticker, o.event_type)
+                for p in self.predictions
+            )
+        ]
 
     @property
     def unpaired_predictions(self) -> list[PipelinePrediction]:
-        outcome_keys: set[tuple[str, date]] = {
-            (o.ticker, o.event_date) for o in self.outcomes
-        }
-        outcome_tickers = {o.ticker for o in self.outcomes}
-        unpaired = []
-        for p in self.predictions:
-            if p.catalyst_date and (p.ticker, p.catalyst_date) in outcome_keys:
-                continue
-            if not p.catalyst_date and p.ticker in outcome_tickers:
-                continue
-            unpaired.append(p)
-        return unpaired
+        return [
+            p for p in self.predictions
+            if not any(
+                experiments_match(p.ticker, p.catalyst_type, o.ticker, o.event_type)
+                for o in self.outcomes
+            )
+        ]
 
 
 class WatchlistEntry(BaseModel):
@@ -136,6 +151,7 @@ class WatchlistEntry(BaseModel):
     company_name: str = ""
     action: str
     catalyst_date: date | None
+    catalyst_type: str | None = None
     pts_gap: float
     net_conviction: int
     science_pts: float
