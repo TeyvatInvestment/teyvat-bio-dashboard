@@ -10,6 +10,7 @@ import streamlit as st
 from data_loader import (
     get_all_portfolio_snapshots,
     get_current_prices,
+    get_portfolio_comparison_metrics,
     get_portfolio_list,
     get_portfolio_snapshots,
     get_portfolio_state,
@@ -191,18 +192,48 @@ if len(portfolios) > 1:
             pivot = overlay_df.pivot(index="date", columns="portfolio", values="NAV")
             st.line_chart(pivot)
 
-            # Summary comparison table
-            comp_rows = []
-            for p in portfolios:
-                comp_rows.append({
-                    "Portfolio": p["portfolio_label"],
-                    "NAV": f"${p['nav']:,.0f}",
-                    "Return": f"{p['return_pct']:+.1%}",
-                    "Positions": p["num_positions"],
-                    "Realized P&L": f"${p['total_realized_pnl']:,.0f}",
-                    "Costs": f"${p['total_transaction_costs']:,.0f}",
-                })
-            st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+            # Enhanced comparison metrics
+            comparison = get_portfolio_comparison_metrics()
+            if comparison:
+                st.subheader("Performance Comparison")
+
+                comp_df = pd.DataFrame([{
+                    "Portfolio": m["label"],
+                    "NAV": f"${m['nav']:,.0f}",
+                    "Return": f"{m['return_pct']:.1%}",
+                    "Positions": m["num_positions"],
+                    "Trades": m["num_trades"],
+                    "Win Rate": f"{m['win_rate']:.0%}" if m["win_rate"] is not None else "N/A",
+                    "Avg Win": f"${m['avg_win']:,.0f}" if m["avg_win"] is not None else "N/A",
+                    "Avg Loss": f"${m['avg_loss']:,.0f}" if m["avg_loss"] is not None else "N/A",
+                    "Realized P&L": f"${m['realized_pnl']:,.0f}",
+                    "Costs": f"${m['total_costs']:,.0f}",
+                    "Max DD": f"{m['max_drawdown']:.1%}" if m["max_drawdown"] < 0 else "0.0%",
+                    "Sharpe": f"{m['sharpe']:.2f}" if m["sharpe"] is not None else "N/A",
+                } for m in comparison])
+
+                st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+                # Risk configuration comparison
+                st.subheader("Portfolio Configuration")
+
+                config_rows = []
+                for m in comparison:
+                    f = m.get("filters", {})
+                    config_rows.append({
+                        "Portfolio": m["label"],
+                        "Min Conv": f.get("min_conviction", 0) or "—",
+                        "Min Gap": f"{f.get('min_pts_gap', 5.0):.1f}",
+                        "Max Pos": f.get("max_positions", 0) or "∞",
+                        "M1 Pos%": f"{f['risk_max_position_pct']:.1f}" if f.get("risk_max_position_pct") is not None else "default",
+                        "M2 MoA%": f"{f['risk_max_moa_pct']:.1f}" if f.get("risk_max_moa_pct") is not None else "default",
+                        "M3 Cluster": str(f["risk_max_catalyst_cluster"]) if f.get("risk_max_catalyst_cluster") is not None else "default",
+                        "M5 DD": f"{f['risk_portfolio_stop']:.0%}" if f.get("risk_portfolio_stop") is not None else "default",
+                        "M6 ADV%": f"{f['risk_max_adv_pct']:.0%}" if f.get("risk_max_adv_pct") is not None else "default",
+                    })
+
+                config_df = pd.DataFrame(config_rows)
+                st.dataframe(config_df, use_container_width=True, hide_index=True)
         else:
             st.info("No snapshots across portfolios yet.")
     else:

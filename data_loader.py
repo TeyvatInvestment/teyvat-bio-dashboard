@@ -39,6 +39,9 @@ def _row_to_outcome(row: dict) -> CatalystOutcome:
         price_before=row["price_before"],
         price_after=row["price_after"],
         price_change_pct=row["price_change_pct"],
+        price_event_day=row.get("price_event_day"),
+        price_7d_after=row.get("price_7d_after"),
+        price_14d_after=row.get("price_14d_after"),
         price_30d_after=row.get("price_30d_after"),
         notes=row.get("notes"),
     )
@@ -56,6 +59,7 @@ def _row_to_prediction(row: dict) -> PipelinePrediction:
         evidence_quality=row["evidence_quality"],
         next_catalyst=row.get("next_catalyst", ""),
         catalyst_date=row.get("catalyst_date"),
+        catalyst_type=row.get("catalyst_type"),
         market_pts=row["market_pts"],
         rnpv_per_share=row["rnpv_per_share"],
         success_price=row.get("success_price"),
@@ -80,7 +84,7 @@ def _row_to_prediction(row: dict) -> PipelinePrediction:
     )
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_eval_dataset() -> dict:
     """Load and cache the full eval dataset from Supabase.
 
@@ -725,6 +729,169 @@ def get_all_portfolio_snapshots() -> dict[str, list[dict]]:
         pid = row.get("portfolio_id", "default")
         result.setdefault(pid, []).append(row)
     return result
+
+
+@st.cache_data(ttl=300)
+def get_portfolio_comparison_metrics() -> list[dict]:
+    """Compute cross-portfolio comparison metrics for the comparison table.
+
+    Returns list of dicts with: portfolio_id, label, nav, initial_nav, return_pct,
+    num_positions, num_trades, win_rate, avg_win, avg_loss, realized_pnl,
+    total_costs, max_drawdown, sharpe, filters (dict with risk overrides).
+    """
+    import math
+
+    try:
+        client = _get_supabase_client()
+    except Exception:
+        logger.debug("portfolio_state table not available")
+        return []
+
+    states_resp = client.table("portfolio_state").select("*").execute()
+    if not states_resp.data:
+        return []
+
+    results = []
+    for state_row in states_resp.data:
+        pid = state_row["portfolio_id"]
+        positions = state_row.get("positions") or {}
+        cash = float(state_row.get("cash", 0))
+        positions_value = (
+            sum(float(p.get("market_value", 0)) for p in positions.values())
+            if isinstance(positions, dict)
+            else 0
+        )
+        nav = cash + positions_value
+        initial_nav = float(state_row.get("initial_nav", 300000))
+        ret = (nav - initial_nav) / initial_nav if initial_nav > 0 else 0
+
+        filters = state_row.get("filters") or {}
+
+        # Get trades
+        trades_resp = (
+            client.table("portfolio_trades").select("*").eq("portfolio_id", pid).execute()
+        )
+        trades = trades_resp.data or []
+
+        # Win/loss from closed (SELL) trades with realized P&L
+        sells = [t for t in trades if t.get("side") == "SELL" and t.get("realized_pnl") is not None]
+        wins = [t for t in sells if float(t["realized_pnl"]) > 0]
+        losses = [t for t in sells if float(t["realized_pnl"]) <= 0]
+        win_rate = len(wins) / len(sells) if sells else None
+        avg_win = sum(float(t["realized_pnl"]) for t in wins) / len(wins) if wins else None
+        avg_loss = sum(float(t["realized_pnl"]) for t in losses) / len(losses) if losses else None
+
+        # Get snapshots for max drawdown and Sharpe
+        snaps_resp = (
+            client.table("portfolio_snapshots")
+            .select("nav, snapshot_date")
+            .eq("portfolio_id", pid)
+            .order("snapshot_date")
+            .execute()
+        )
+        snapshots = snaps_resp.data or []
+
+        # Max drawdown
+        max_dd = 0.0
+        if snapshots:
+            peak = float(snapshots[0]["nav"])
+            for snap in snapshots:
+                snap_nav = float(snap["nav"])
+                if snap_nav > peak:
+                    peak = snap_nav
+                dd = (snap_nav - peak) / peak if peak > 0 else 0
+                if dd < max_dd:
+                    max_dd = dd
+
+        # Sharpe ratio (annualized, from daily returns)
+        sharpe = None
+        if len(snapshots) >= 30:
+            returns = []
+            for i in range(1, len(snapshots)):
+                prev = float(snapshots[i - 1]["nav"])
+                if prev > 0:
+                    returns.append((float(snapshots[i]["nav"]) - prev) / prev)
+            if returns:
+                mean_r = sum(returns) / len(returns)
+                var_r = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+                std_r = math.sqrt(var_r) if var_r > 0 else 0
+                if std_r > 0:
+                    sharpe = (mean_r / std_r) * math.sqrt(252)
+
+        results.append({
+            "portfolio_id": pid,
+            "label": state_row.get("portfolio_label", pid),
+            "nav": nav,
+            "initial_nav": initial_nav,
+            "return_pct": ret,
+            "num_positions": len(positions) if isinstance(positions, dict) else 0,
+            "num_trades": len(trades),
+            "win_rate": win_rate,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "realized_pnl": float(state_row.get("total_realized_pnl", 0)),
+            "total_costs": float(state_row.get("total_transaction_costs", 0)),
+            "max_drawdown": max_dd,
+            "sharpe": sharpe,
+            "filters": filters,
+        })
+
+    return results
+
+
+@st.cache_data(ttl=300)
+def get_outcome_price_evolution() -> list[dict]:
+    """Load outcomes with extended price data for price evolution charts.
+
+    Returns list of dicts with: ticker, event_date, outcome, event_type,
+    and normalized price changes at each time point (% from T-1).
+    Only includes outcomes that have at least price_after (T+1) data.
+    """
+    try:
+        client = _get_supabase_client()
+    except Exception:
+        logger.debug("eval_outcomes table not available")
+        return []
+
+    resp = (
+        client.table("eval_outcomes")
+        .select(
+            "ticker, event_date, outcome, event_type, price_before, price_event_day, "
+            "price_after, price_7d_after, price_14d_after, price_30d_after"
+        )
+        .not_.is_("price_after", "null")
+        .order("event_date", desc=True)
+        .execute()
+    )
+
+    results = []
+    for row in resp.data or []:
+        base = float(row["price_before"]) if row.get("price_before") else None
+        if not base or base <= 0:
+            continue
+
+        entry: dict = {
+            "ticker": row["ticker"],
+            "event_date": row["event_date"],
+            "outcome": row["outcome"],
+            "event_type": row.get("event_type", ""),
+            "T-1": 0.0,  # baseline
+        }
+
+        if row.get("price_event_day") is not None:
+            entry["T=0"] = (float(row["price_event_day"]) - base) / base * 100
+        if row.get("price_after") is not None:
+            entry["T+1"] = (float(row["price_after"]) - base) / base * 100
+        if row.get("price_7d_after") is not None:
+            entry["T+7"] = (float(row["price_7d_after"]) - base) / base * 100
+        if row.get("price_14d_after") is not None:
+            entry["T+14"] = (float(row["price_14d_after"]) - base) / base * 100
+        if row.get("price_30d_after") is not None:
+            entry["T+30"] = (float(row["price_30d_after"]) - base) / base * 100
+
+        results.append(entry)
+
+    return results
 
 
 # ---------------------------------------------------------------------------

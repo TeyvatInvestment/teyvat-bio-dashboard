@@ -4,12 +4,17 @@ Deployed on Streamlit Community Cloud. Reads from Supabase.
 Protected by streamlit-authenticator (cookie-based sessions).
 
 Pages:
-  1. Watchlist        — predictions with urgency status and live prices
-  2. Scorecard        — 6 core eval metrics and per-event breakdown
-  3. Dataset          — coverage summary and unpaired items
-  4. Portfolio        — paper portfolio holdings, P&L, exposure, NAV tracking
-  5. Reports          — shared research reports
-  6. Request Report   — submit a research report request
+  Monitoring:
+    1. Experiments     — experiment lifecycle tracking (active + completed)
+    2. Scorecard       — aggregate eval metrics and per-event breakdown
+  Portfolio:
+    3. Portfolio       — paper portfolio holdings, P&L, exposure, NAV tracking
+  Data & Reports:
+    4. Reports         — shared research reports
+    5. Dataset         — raw data, auto-cycle history, detections
+  Workflow:
+    6. Review Queue    — confirm or dismiss auto-detected outcomes
+    7. Request Report  — submit a research report request
 """
 
 from __future__ import annotations
@@ -24,6 +29,8 @@ from data_loader import (
     get_current_prices,
     get_detections,
     get_eval_dataset,
+    get_outcome_price_evolution,
+    get_portfolio_comparison_metrics,
     get_portfolio_list,
     get_portfolio_snapshots,
     get_portfolio_state,
@@ -94,6 +101,8 @@ with st.sidebar:
         get_portfolio_trades.clear()
         get_portfolio_snapshots.clear()
         get_all_portfolio_snapshots.clear()
+        get_portfolio_comparison_metrics.clear()
+        get_outcome_price_evolution.clear()
         st.session_state["last_refreshed"] = datetime.now()
         st.rerun()
     st.caption(f"Last refreshed: {st.session_state['last_refreshed'].strftime('%Y-%m-%d %H:%M:%S')}")
@@ -103,16 +112,19 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 pg = st.navigation(
     {
-        "Dashboard": [
-            st.Page("views/watchlist.py", title="Watchlist", icon=":material/monitoring:", default=True),
+        "Monitoring": [
+            st.Page("views/experiments.py", title="Experiments", icon=":material/science:", default=True),
             st.Page("views/scorecard.py", title="Scorecard", icon=":material/assessment:"),
-            st.Page("views/dataset.py", title="Dataset", icon=":material/database:"),
         ],
         "Portfolio": [
             st.Page("views/portfolio.py", title="Portfolio", icon=":material/account_balance:"),
         ],
-        "Research": [
+        "Data & Reports": [
             st.Page("views/reports.py", title="Reports", icon=":material/description:"),
+            st.Page("views/dataset.py", title="Dataset", icon=":material/database:"),
+        ],
+        "Workflow": [
+            st.Page("views/review_queue.py", title="Review Queue", icon=":material/checklist:"),
             st.Page("views/request_report.py", title="Request Report", icon=":material/add_circle:"),
         ],
     }
