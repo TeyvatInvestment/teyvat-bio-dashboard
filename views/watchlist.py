@@ -343,6 +343,7 @@ if _flagged:
         _d_confidence = _det.get("confidence", "?")
         _d_event_type = _det.get("event_type", "PDUFA")
         _d_catalyst_date = _det.get("catalyst_date")
+        _d_press_release_date = _det.get("press_release_date")
         _d_company = _det.get("company_name", "")
         _d_sources = _det.get("sources", [])
         _d_evidence = _det.get("evidence", [])
@@ -359,6 +360,8 @@ if _flagged:
 
             with _d_col_info:
                 st.markdown(f"**Catalyst Date:** {_d_catalyst_date or 'N/A'}")
+                if _d_press_release_date and _d_press_release_date != _d_catalyst_date:
+                    st.markdown(f"**Press Release Date:** {_d_press_release_date}")
                 st.markdown(
                     f"**Sources:** "
                     f"{', '.join(_d_sources) if _d_sources else 'N/A'}"
@@ -425,8 +428,11 @@ if _flagged:
                         "Event Type", _event_types_list, index=_d_def_et,
                         key=f"et_{_fk}",
                     )
+                    # Prefer press_release_date (actual event) over
+                    # catalyst_date (scheduled) — mirrors auto-record logic
+                    _rq_raw_date = _d_press_release_date or _d_catalyst_date
                     try:
-                        _rq_def_date = date.fromisoformat(str(_d_catalyst_date))
+                        _rq_def_date = date.fromisoformat(str(_rq_raw_date))
                     except (ValueError, TypeError):
                         _rq_def_date = date.today()
                     _rq_date = st.date_input(
