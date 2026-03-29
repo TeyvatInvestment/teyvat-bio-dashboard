@@ -539,7 +539,7 @@ else:
                 y=alt.Y("Change %:Q", title="Price Change (%)"),
                 color=alt.Color("Outcome:N", title=""),
             )
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
 
             # Summary table
             with st.expander("Outcome Details", expanded=False):
@@ -557,6 +557,6 @@ else:
                     }
                     detail_rows.append(row)
 
-                st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
     else:
         st.info("No outcomes match the selected filters.")

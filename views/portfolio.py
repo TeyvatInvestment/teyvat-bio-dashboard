@@ -107,7 +107,7 @@ else:
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
 
     st.caption(
         f"Prices from FMP. "
@@ -142,7 +142,7 @@ with col_right:
         ("Inception", str(state.get("inception_date", "N/A"))),
     ]
     stats_df = pd.DataFrame(stats_rows, columns=["Metric", "Value"])
-    st.dataframe(stats_df, hide_index=True, use_container_width=True)
+    st.dataframe(stats_df, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------------------
 # NAV over time (single portfolio)
@@ -212,7 +212,7 @@ if len(portfolios) > 1:
                     "Sharpe": f"{m['sharpe']:.2f}" if m["sharpe"] is not None else "N/A",
                 } for m in comparison])
 
-                st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                st.dataframe(comp_df, width="stretch", hide_index=True)
 
                 # Risk configuration comparison
                 st.subheader("Portfolio Configuration")
@@ -233,7 +233,7 @@ if len(portfolios) > 1:
                     })
 
                 config_df = pd.DataFrame(config_rows)
-                st.dataframe(config_df, use_container_width=True, hide_index=True)
+                st.dataframe(config_df, width="stretch", hide_index=True)
         else:
             st.info("No snapshots across portfolios yet.")
     else:
@@ -266,7 +266,7 @@ if trades:
         })
 
     trade_df = pd.DataFrame(trade_rows)
-    st.dataframe(trade_df, hide_index=True, use_container_width=True)
+    st.dataframe(trade_df, hide_index=True, width="stretch")
 
     if len(trades) > 50:
         st.caption(f"Showing 50 of {len(trades)} trades.")

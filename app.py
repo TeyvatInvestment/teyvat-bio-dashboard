@@ -90,7 +90,7 @@ with st.sidebar:
     st.write(f"Welcome, **{st.session_state['name']}**")
     authenticator.logout("Logout")
     st.divider()
-    if st.button("Refresh Data", use_container_width=True):
+    if st.button("Refresh Data", width="stretch"):
         get_eval_dataset.clear()
         get_current_prices.clear()
         get_reports.clear()
