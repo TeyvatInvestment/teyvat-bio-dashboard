@@ -157,6 +157,7 @@ for w in filtered:
             "Status": _STATUS_DISPLAY.get(w["status"], w["status"]),
             "Ticker": tk,
             "Company": _company(tk, w.get("company_name", "")),
+            "Analyzed": w.get("run_date", ""),
             "Action": w["action"],
             "Catalyst": w["catalyst_date"] or "TBD",
             "Days": str(w["days_until"]) if w.get("days_until") is not None else "",
