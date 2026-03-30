@@ -53,7 +53,7 @@ def build_watchlist(
                 net_conviction=pred.net_conviction,
                 science_pts=pred.science_pts,
                 market_pts=pred.market_pts,
-                run_date=pred.run_timestamp.date(),
+                run_timestamp=pred.run_timestamp,
                 status=status,
                 days_until=days_until,
                 success_price=pred.success_price,

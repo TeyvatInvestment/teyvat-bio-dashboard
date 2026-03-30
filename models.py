@@ -156,7 +156,7 @@ class WatchlistEntry(BaseModel):
     net_conviction: int
     science_pts: float
     market_pts: float
-    run_date: date
+    run_timestamp: datetime
     status: str  # UPCOMING | DUE_SOON | OVERDUE | RECORDED | UNKNOWN
     days_until: int | None = None
     success_price: float | None = None
