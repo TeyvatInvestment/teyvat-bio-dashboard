@@ -24,6 +24,10 @@ from datetime import datetime
 import streamlit as st
 import streamlit_authenticator as stauth
 
+from cookie_patch import patch_cookie_model
+
+patch_cookie_model()  # Must run before Authenticate() — replaces iframe cookie with native JS
+
 from data_loader import (
     get_all_portfolio_snapshots,
     get_current_prices,
@@ -66,6 +70,7 @@ authenticator = stauth.Authenticate(
     st.secrets["cookie"]["key"],
     st.secrets["cookie"]["expiry_days"],
     auto_hash=False,
+    login_sleep_time=0,  # No sleep needed — native cookie read is instant
 )
 
 authenticator.login()
