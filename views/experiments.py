@@ -14,7 +14,9 @@ import streamlit as st
 from data_loader import (
     get_company_profiles,
     get_current_prices,
+    get_detection_map,
     get_eval_dataset,
+    fetch_monitoring_prices,
     record_outcome_from_ui,
 )
 
@@ -52,6 +54,27 @@ _latest_pred: dict[str, dict] = {}
 for _p in sorted(predictions, key=lambda x: x["run_timestamp"], reverse=True):
     if _p["ticker"] not in _latest_pred:
         _latest_pred[_p["ticker"]] = _p
+
+# Detection map for post-detection price monitoring
+_det_tier1, _det_tier2 = get_detection_map()
+
+
+def _find_detection(w: dict) -> dict | None:
+    """Look up detection for a watchlist entry using 2-tier matching.
+
+    Tier 1: (ticker, catalyst_type, catalyst_date) — precise match.
+    Tier 2: (ticker, catalyst_date) — fallback when catalyst_type is None.
+
+    Note: prediction ``catalyst_type`` is equivalent to detection ``event_type``.
+    """
+    tk = w["ticker"]
+    cat_type = w.get("catalyst_type")
+    cat_date = str(w.get("catalyst_date") or "")
+
+    if cat_type is not None:
+        return _det_tier1.get((tk, cat_type, cat_date))
+    # Tier 2 fallback for legacy predictions without catalyst_type
+    return _det_tier2.get((tk, cat_date))
 
 # ---------------------------------------------------------------------------
 # Page
@@ -152,6 +175,15 @@ for w in filtered:
         else:
             result = f"{outcome} ({ret:+.0%})"
 
+    # Detection monitoring columns
+    det = _find_detection(w)
+    _det_base = float(det["price_before"]) if det and det.get("price_before") else None
+
+    def _det_ret(field: str) -> str:
+        if det and det.get(field) is not None and _det_base and _det_base > 0:
+            return f"{(float(det[field]) - _det_base) / _det_base * 100:+.1f}%"
+        return "\u2014"
+
     rows.append(
         {
             "Status": _STATUS_DISPLAY.get(w["status"], w["status"]),
@@ -167,6 +199,10 @@ for w in filtered:
             "Current": f"${live:.2f}" if live else "",
             "Since Pred": f"{since_pred:+.1%}" if since_pred is not None else "",
             "Result": result,
+            "Detected": det["created_at"][:10] if det and det.get("created_at") else "\u2014",
+            "T+1 %": _det_ret("price_after"),
+            "T+7 %": _det_ret("price_7d_after"),
+            "T+30 %": _det_ret("price_30d_after"),
         }
     )
 
@@ -361,6 +397,82 @@ elif _pred:
         "Binary decomposition not available for this prediction. "
         "Older runs may not include success/failure prices."
     )
+
+# --- Post-Detection Monitoring ---
+_det = _find_detection(_exp)
+if _det:
+    st.divider()
+    st.markdown("#### Post-Detection Monitoring")
+
+    # Detection metadata
+    _dm1, _dm2, _dm3, _dm4 = st.columns(4)
+    _dm1.metric("Detected", (_det.get("created_at") or "")[:10] or "\u2014")
+    _dm2.metric("Confidence", _det.get("confidence") or "\u2014")
+    _dm3.metric("Status", _det.get("status") or "\u2014")
+    _dm4.metric("Outcome", _det.get("outcome") or "\u2014")
+
+    # Price anchor: press_release_date ?? catalyst_date
+    _anchor = _det.get("press_release_date") or _det.get("catalyst_date")
+    _mon_base = float(_det["price_before"]) if _det.get("price_before") else None
+
+    if _mon_base and _mon_base > 0 and _anchor:
+        # Merge: DB detection prices, FMP supplements None fields only
+        _mon_prices = {
+            "price_after": _det.get("price_after"),
+            "price_7d_after": _det.get("price_7d_after"),
+            "price_14d_after": _det.get("price_14d_after"),
+            "price_30d_after": _det.get("price_30d_after"),
+        }
+        if any(v is None for v in _mon_prices.values()):
+            _fmp = fetch_monitoring_prices(_tk, str(_anchor))
+            for _mk in _mon_prices:
+                if _mon_prices[_mk] is None and _fmp.get(_mk) is not None:
+                    _mon_prices[_mk] = _fmp[_mk]
+
+        # Build chart data (skip missing timepoints)
+        _time_points = ["T-1", "T+1", "T+7", "T+14", "T+30"]
+        _chart_data = [{"Time": "T-1", "Change %": 0.0}]
+        for _tp, _field in [
+            ("T+1", "price_after"),
+            ("T+7", "price_7d_after"),
+            ("T+14", "price_14d_after"),
+            ("T+30", "price_30d_after"),
+        ]:
+            _val = _mon_prices.get(_field)
+            if _val is not None:
+                _chart_data.append(
+                    {"Time": _tp, "Change %": (float(_val) - _mon_base) / _mon_base * 100}
+                )
+
+        if len(_chart_data) > 1:
+            import altair as alt
+
+            _chart_df = pd.DataFrame(_chart_data)
+            _time_order = [t for t in _time_points if t in _chart_df["Time"].values]
+            _mon_chart = alt.Chart(_chart_df).mark_line(point=True).encode(
+                x=alt.X("Time:N", sort=_time_order, title=""),
+                y=alt.Y("Change %:Q", title="Price Change from T-1 (%)"),
+            )
+            st.altair_chart(_mon_chart, width="stretch")
+
+        # Return metrics
+        _rm1, _rm2, _rm3, _rm4 = st.columns(4)
+        for _col, _label, _field in [
+            (_rm1, "T+1", "price_after"),
+            (_rm2, "T+7", "price_7d_after"),
+            (_rm3, "T+14", "price_14d_after"),
+            (_rm4, "T+30", "price_30d_after"),
+        ]:
+            _val = _mon_prices.get(_field)
+            if _val is not None:
+                _ret = (float(_val) - _mon_base) / _mon_base * 100
+                _col.metric(_label, f"${float(_val):.2f}", f"{_ret:+.1f}%")
+            else:
+                _col.metric(_label, "\u2014")
+
+    # Sources
+    if _det.get("sources"):
+        st.caption(f"Sources: {', '.join(_det['sources'])}")
 
 
 # ===================================================================

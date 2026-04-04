@@ -31,8 +31,10 @@ patch_cookie_model()  # Must run before Authenticate() — replaces iframe cooki
 from data_loader import (
     get_all_portfolio_snapshots,
     get_current_prices,
+    get_detection_map,
     get_detections,
     get_eval_dataset,
+    fetch_monitoring_prices,
     get_outcome_price_evolution,
     get_portfolio_comparison_metrics,
     get_portfolio_list,
@@ -101,6 +103,8 @@ with st.sidebar:
         get_reports.clear()
         get_report_requests.clear()
         get_detections.clear()
+        get_detection_map.clear()
+        fetch_monitoring_prices.clear()
         get_portfolio_list.clear()
         get_portfolio_state.clear()
         get_portfolio_trades.clear()

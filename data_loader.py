@@ -205,15 +205,18 @@ VALID_OUTCOMES = frozenset({"APPROVED", "CRL", "MET_ENDPOINT", "FAILED", "DELAYE
 VALID_EVENT_TYPES = frozenset({"PDUFA", "Phase3_Readout", "AdCom", "NDA", "EarningsReadout"})
 
 
-def _fetch_event_prices(ticker: str, event_date: date) -> dict:
-    """Fetch T-1 and T+1 closing prices using FMP historical price API.
+def _fetch_event_prices(ticker: str, event_date: date, days_after: int = 10) -> dict:
+    """Fetch closing prices around event_date using FMP historical price API.
 
-    Queries a 10-day window around the event date to handle weekends/holidays.
-    Returns {"price_before": float|None, "price_after": float|None, "warnings": list[str]}.
+    Always returns T-1 (``price_before``) and T+1 (``price_after``).
+    When ``days_after > 10``, also extracts T+7, T+14, T+30 by counting
+    trading day bars in the FMP data.
+
+    Returns dict with price fields and warnings list.
     """
     api_key = st.secrets["fmp"]["api_key"]
     from_date = event_date - timedelta(days=10)
-    to_date = event_date + timedelta(days=10)
+    to_date = event_date + timedelta(days=days_after)
 
     try:
         resp = httpx.get(
@@ -247,19 +250,31 @@ def _fetch_event_prices(ticker: str, event_date: date) -> dict:
             price_before = bar["close"]
             break
 
-    # T+1: first trading day strictly after event_date
-    for bar in sorted_bars:
-        bar_date = date.fromisoformat(bar["date"])
-        if bar_date > event_date:
-            price_after = bar["close"]
-            break
+    # Trading days strictly after event_date (for T+1, T+7, T+14, T+30)
+    bars_after = [b for b in sorted_bars if date.fromisoformat(b["date"]) > event_date]
+
+    # T+1: first trading day after event
+    if bars_after:
+        price_after = bars_after[0]["close"]
 
     if price_before is None:
         warnings.append(f"No T-1 price found for {ticker} before {event_date}")
     if price_after is None:
         warnings.append(f"No T+1 price found for {ticker} after {event_date}")
 
-    return {"price_before": price_before, "price_after": price_after, "warnings": warnings}
+    result: dict = {
+        "price_before": price_before,
+        "price_after": price_after,
+        "warnings": warnings,
+    }
+
+    # Extended time points (only when fetching a wider window)
+    if days_after > 10:
+        result["price_7d_after"] = bars_after[6]["close"] if len(bars_after) >= 7 else None
+        result["price_14d_after"] = bars_after[13]["close"] if len(bars_after) >= 14 else None
+        result["price_30d_after"] = bars_after[29]["close"] if len(bars_after) >= 30 else None
+
+    return result
 
 
 def record_outcome_from_ui(
@@ -435,6 +450,115 @@ def get_detections(
     except Exception:
         logger.debug("eval_detections table not available")
         return []
+
+
+@st.cache_data(ttl=300)
+def get_detection_map() -> tuple[dict, dict]:
+    """Load active detections indexed for experiment matching.
+
+    Returns ``(tier1, tier2)`` where:
+      - tier1: ``dict[(ticker, event_type, catalyst_date_str), detection_dict]``
+      - tier2: ``dict[(ticker, catalyst_date_str), detection_dict]`` — fallback
+        for legacy predictions with ``catalyst_type=None``
+
+    Excludes dismissed and no_signal detections, and detections where both
+    ``press_release_date`` and ``catalyst_date`` are None (no price anchor).
+
+    Dedup per key: status priority (confirmed > auto_recorded > flagged > detected),
+    then most recent ``created_at``.
+
+    Field name note: detection ``event_type`` is equivalent to prediction ``catalyst_type``.
+    """
+    _STATUS_PRIORITY = {"confirmed": 0, "auto_recorded": 1, "flagged": 2, "detected": 3}
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("eval_detections")
+            .select("*")
+            .not_.in_("status", ["dismissed", "no_signal"])
+            .order("created_at", desc=True)
+            .limit(200)
+            .execute()
+        )
+        detections = resp.data or []
+    except Exception:
+        logger.debug("eval_detections table not available for detection map")
+        return {}, {}
+
+    tier1: dict[tuple[str, str, str], dict] = {}
+    tier2: dict[tuple[str, str], dict] = {}
+
+    for det in detections:
+        # Skip detections with no price anchor
+        if not det.get("press_release_date") and not det.get("catalyst_date"):
+            continue
+
+        tk = det.get("ticker", "")
+        etype = det.get("event_type", "")
+        cat_date = str(det.get("catalyst_date", ""))
+        status = det.get("status", "detected")
+        priority = _STATUS_PRIORITY.get(status, 99)
+
+        # Tier 1: (ticker, event_type, catalyst_date)
+        if etype:
+            key1 = (tk, etype, cat_date)
+            existing = tier1.get(key1)
+            if existing is None:
+                tier1[key1] = det
+            else:
+                ex_priority = _STATUS_PRIORITY.get(existing.get("status", ""), 99)
+                if priority < ex_priority:
+                    tier1[key1] = det
+                # If same priority, first one wins (already sorted by created_at desc)
+
+        # Tier 2: (ticker, catalyst_date) — fallback for catalyst_type=None
+        key2 = (tk, cat_date)
+        existing2 = tier2.get(key2)
+        if existing2 is None:
+            tier2[key2] = det
+        else:
+            ex_priority2 = _STATUS_PRIORITY.get(existing2.get("status", ""), 99)
+            if priority < ex_priority2:
+                tier2[key2] = det
+
+    return tier1, tier2
+
+
+@st.cache_data(ttl=3600)
+def fetch_monitoring_prices(ticker: str, anchor_date_str: str) -> dict:
+    """Fetch monitoring prices at T-1, T+1, T+7, T+14, T+30 from FMP.
+
+    ``anchor_date_str`` should be ``press_release_date`` or ``catalyst_date``
+    (caller resolves the fallback).
+
+    Returns dict with raw prices and computed returns (% change from T-1 baseline):
+    ``ret_t1``, ``ret_t7``, ``ret_t14``, ``ret_t30`` (float|None, as percentage).
+    """
+    try:
+        anchor = date.fromisoformat(anchor_date_str)
+    except (ValueError, TypeError):
+        return {}
+
+    prices = _fetch_event_prices(ticker, anchor, days_after=45)
+    base = prices.get("price_before")
+    if not base or base <= 0:
+        return prices
+
+    # Compute returns from T-1 baseline
+    for field, ret_key in [
+        ("price_after", "ret_t1"),
+        ("price_7d_after", "ret_t7"),
+        ("price_14d_after", "ret_t14"),
+        ("price_30d_after", "ret_t30"),
+    ]:
+        val = prices.get(field)
+        if val is not None:
+            prices[ret_key] = round((val - base) / base * 100, 1)
+        else:
+            prices[ret_key] = None
+
+    return prices
 
 
 # ---------------------------------------------------------------------------
