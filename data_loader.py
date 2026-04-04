@@ -78,6 +78,7 @@ def _row_to_prediction(row: dict) -> PipelinePrediction:
         entry_price_limit=row.get("entry_price_limit"),
         stop_loss_price=row.get("stop_loss_price"),
         execution_plan=row.get("execution_plan"),
+        batch_id=row.get("batch_id"),
         data_quality_score=row["data_quality_score"],
         data_warnings=row.get("data_warnings", []),
         trace_path=row.get("trace_path"),

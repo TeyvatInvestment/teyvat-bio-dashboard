@@ -199,6 +199,7 @@ for w in filtered:
             "Current": f"${live:.2f}" if live else "",
             "Since Pred": f"{since_pred:+.1%}" if since_pred is not None else "",
             "Result": result,
+            "Batch": _latest_pred.get(tk, {}).get("batch_id", "")[:8] if _latest_pred.get(tk, {}).get("batch_id") else "\u2014",
             "Detected": det["created_at"][:10] if det and det.get("created_at") else "\u2014",
             "T+1 %": _det_ret("price_after"),
             "T+7 %": _det_ret("price_7d_after"),

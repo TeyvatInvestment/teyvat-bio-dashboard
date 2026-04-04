@@ -74,6 +74,9 @@ class PipelinePrediction(BaseModel):
     stop_loss_price: float | None = None
     execution_plan: dict | None = None  # Full serialized ExecutionPlan (JSONB)
 
+    # Batch tracking
+    batch_id: str | None = None
+
     # Quality
     data_quality_score: float
     data_warnings: list[str] = []
